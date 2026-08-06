@@ -89,5 +89,16 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => console.log('User Disconnected'));
 });
 
+// Driver Sends a Bid
+app.post('/rides/bid', async (req, res) => {
+    const { rideId, driverId, bidFare, driverName } = req.body;
+    console.log(`Bid received for ${rideId} from ${driverName}: Rs.${bidFare}`);
+    
+    // Notify the passenger specifically via Socket
+    io.emit('new_bid_' + rideId, req.body); 
+    
+    res.json({ success: true, message: "Bid submitted" });
+});
+
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, "0.0.0.0", () => console.log(`🚀 Server on ${PORT}`));
