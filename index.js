@@ -100,5 +100,21 @@ app.post('/rides/bid', async (req, res) => {
     res.json({ success: true, message: "Bid submitted" });
 });
 
+// Chat Message handle karna
+app.post('/chat/send', async (req, res) => {
+    const { rideId, senderId, text, senderName } = req.body;
+    const msg = { id: Date.now().toString(), rideId, senderId, text, senderName, timestamp: Date.now() };
+    io.emit('receive_message', msg);
+    res.json(msg);
+});
+
+// Ride Status update karna (Arrived, Started etc)
+app.post('/rides/update-status', async (req, res) => {
+    const { rideId, status } = req.body;
+    const ride = await Ride.findByIdAndUpdate(rideId, { status }, { new: true });
+    io.emit('ride_status_updated', { rideId, status });
+    res.json(ride);
+});
+
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, "0.0.0.0", () => console.log(`🚀 Server on ${PORT}`));
