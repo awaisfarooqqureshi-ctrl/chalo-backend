@@ -2,71 +2,92 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const http = require('http');
-const jwt = require('jsonwebtoken'); // Install this: npm install jsonwebtoken
+const { Server } = require('socket.io');
+const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
 const app = express();
 const server = http.createServer(app);
+const io = new Server(server, { cors: { origin: "*" } });
 
 app.use(cors());
 app.use(express.json());
 
 // MongoDB Connection
-const mongoURI = process.env.MONGO_URI;
-mongoose.connect(mongoURI, { useNewUrlParser: true, useUnifiedTopology: true })
+mongoose.connect(process.env.MONGO_URI)
     .then(() => console.log("✅ MongoDB Connected"))
     .catch(err => console.error("❌ MongoDB Error:", err));
 
-// --- USER MODEL ---
+// --- MODELS ---
+
 const UserSchema = new mongoose.Schema({
     phone: { type: String, unique: true, required: true },
-    name: String,
-    role: { type: String, default: 'Passenger' },
+    name: { type: String, default: "" },
+    role: { type: String, enum: ['Driver', 'Passenger', 'Admin'], default: 'Passenger' },
     walletBalance: { type: Number, default: 0 },
-    welcomeBonusApplied: { type: Boolean, default: false }
+    rating: { type: Number, default: 5.0 },
+    isOnline: { type: Boolean, default: false },
+    lastLat: Number,
+    lastLng: Number
 });
 const User = mongoose.model('User', UserSchema);
 
-// --- AUTH ROUTES ---
-
-// 1. Send OTP (Currently Simulation)
-app.post('/auth/send-otp', async (req, res) => {
-    const { phone } = req.body;
-    console.log(`Sending OTP to ${phone}`);
-    // Shuruat me hum SMS nahi bhej rahe, sirf success return kar rahe hain
-    // User 1234 enter karega toh login ho jaye ga
-    res.json({ message: "OTP sent successfully (Use 1234 for testing)" });
+const RideSchema = new mongoose.Schema({
+    passengerId: String,
+    passengerName: String,
+    pickupLocation: String,
+    destination: String,
+    pickupLat: Number,
+    pickupLng: Number,
+    destLat: Number,
+    destLng: Number,
+    fare: Number,
+    status: { type: String, default: 'PENDING' }, // PENDING, ACCEPTED, ON_TRIP, COMPLETED
+    driverId: String,
+    driverName: String,
+    timestamp: { type: Date, default: Date.now }
 });
+const Ride = mongoose.model('Ride', RideSchema);
 
-// 2. Verify OTP
+// --- ROUTES ---
+
+// 1. Auth & Profile
 app.post('/auth/verify-otp', async (req, res) => {
     const { phone, otp } = req.body;
-
-    if (otp === "1234") { // Testing OTP
+    if (otp === "1234") {
         let user = await User.findOne({ phone });
-        if (!user) {
-            user = new User({ phone });
-            await user.save();
-        }
-
-        // Generate JWT Token
-        const token = jwt.sign({ userId: user._id, phone: user.phone }, 'YOUR_SECRET_KEY', { expiresIn: '30d' });
-        
-        res.json({
-            token,
-            userId: user._id,
-            message: "Login successful"
-        });
-    } else {
-        res.status(400).json({ message: "Invalid OTP" });
-    }
+        if (!user) user = await User.create({ phone });
+        const token = jwt.sign({ userId: user._id }, 'CHALO_SECRET', { expiresIn: '30d' });
+        res.json({ token, userId: user._id, user });
+    } else res.status(400).send("Invalid OTP");
 });
 
-app.get('/', (req, res) => {
-    res.send("Chalo API is Running Live with Auth!");
+app.post('/users/update-profile', async (req, res) => {
+    const { userId, name, role } = req.body;
+    const user = await User.findByIdAndUpdate(userId, { name, role }, { new: true });
+    res.json(user);
+});
+
+// 2. Rides
+app.post('/rides/request', async (req, res) => {
+    const ride = await Ride.create(req.body);
+    io.emit('new_ride_request', ride); // Broadcast to all drivers
+    res.json(ride);
+});
+
+// --- REAL-TIME (SOCKET.IO) ---
+io.on('connection', (socket) => {
+    console.log('User Connected:', socket.id);
+
+    // Live Tracking
+    socket.on('update_location', async (data) => {
+        const { userId, lat, lng } = data;
+        await User.findByIdAndUpdate(userId, { lastLat: lat, lastLng: lng });
+        io.emit('location_updated', data); // Inform other users
+    });
+
+    socket.on('disconnect', () => console.log('User Disconnected'));
 });
 
 const PORT = process.env.PORT || 8080;
-server.listen(PORT, "0.0.0.0", () => {
-    console.log(`🚀 Server is running on port ${PORT}`);
-});
+server.listen(PORT, "0.0.0.0", () => console.log(`🚀 Server on ${PORT}`));
