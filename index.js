@@ -22,7 +22,7 @@ mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopol
 
 const UserSchema = new mongoose.Schema({
     phone: { type: String, unique: true, required: true },
-    name: { type: String, default: "" },
+    name: { type: String, default: "User" },
     role: { type: String, enum: ['Driver', 'Passenger', 'Admin'], default: 'Passenger' },
     walletBalance: { type: Number, default: 50 },
     rating: { type: Number, default: 5.0 },
@@ -76,40 +76,30 @@ const EmergencyAlert = mongoose.model('EmergencyAlert', EmergencyAlertSchema);
 
 // --- ROUTES ---
 
-// ... (Auth route me tabdeeli)
+// 1. Auth & Profile
 app.post('/auth/verify-otp', async (req, res) => {
     const { phone, otp } = req.body;
     if (otp === "1234") {
-        let user = await User.findOne({ phone });
-        if (!user) {
-            // Fix: Hamesha default name set karein taake UI me "null" na aaye
-            user = await User.create({ phone, name: "New User" });
-        }
-        // Ensure user.name is never null
-        if (!user.name) user.name = "User";
+        try {
+            let user = await User.findOne({ phone });
+            if (!user) {
+                user = await User.create({ phone, name: "New User", walletBalance: 50 });
+                user.transactions.push({ title: "Welcome Bonus", amount: 50, type: "CREDIT" });
+                await user.save();
+            }
+            if (!user.name) user.name = "User"; // Double check name is not null
 
-        const token = jwt.sign({ userId: user._id }, 'CHALO_SECRET');
-        res.json({ token, userId: user._id.toString(), user, message: "Success" });
+            const token = jwt.sign({ userId: user._id }, 'CHALO_SECRET');
+            res.json({ token, userId: user._id.toString(), user, message: "Success" });
+        } catch(e) { res.status(500).send(e.message); }
     } else res.status(400).send("Invalid OTP");
 });
 
-// NEW: Admin Approval for Testing
-app.post('/admin/approve-driver', async (req, res) => {
-    const { userId } = req.body;
-    try {
-        const user = await User.findByIdAndUpdate(userId, { 
-            driverVerificationStatus: 'approved',
-            role: 'Driver',
-            driverRegistered: true
-        }, { new: true });
-        res.json({ success: true, user });
-    } catch(e) { res.status(500).send(e.message); }
-});
 app.get('/users/profile/:userId', async (req, res) => {
     try {
         const user = await User.findById(req.params.userId);
         user ? res.json(user) : res.status(404).send("User not found");
-    } catch(e) { res.status(200).json({}); }
+    } catch(e) { res.status(200).json({ name: "User" }); }
 });
 
 app.post('/users/update-profile', async (req, res) => {
@@ -124,6 +114,19 @@ app.post('/users/register-driver', async (req, res) => {
         driverRegistered: true, driverVerificationStatus: 'pending', vehicleInfo, documents 
     }, { new: true });
     res.json({ success: true, user });
+});
+
+// NEW: Driver Quick Approval (Testing Only)
+app.post('/admin/approve-driver', async (req, res) => {
+    const { userId } = req.body;
+    try {
+        const user = await User.findByIdAndUpdate(userId, { 
+            driverVerificationStatus: 'approved',
+            role: 'Driver',
+            driverRegistered: true
+        }, { new: true });
+        res.json({ success: true, user });
+    } catch(e) { res.status(500).send(e.message); }
 });
 
 // 2. Rides & Bidding
@@ -144,7 +147,7 @@ app.post('/rides/update-status', async (req, res) => {
     res.json(ride);
 });
 
-// 3. Carpool
+// 3. Carpool & Reviews
 app.post('/carpool/offer', async (req, res) => {
     const offer = await CarpoolOffer.create(req.body);
     io.emit('new_carpool_offer', offer);
@@ -156,17 +159,15 @@ app.get('/carpool/offers', async (req, res) => {
     res.json(offers);
 });
 
-// 4. Reviews
 app.post('/users/review', async (req, res) => {
     const review = await Review.create(req.body);
-    // Update User Average Rating
     const reviews = await Review.find({ targetUserId: req.body.targetUserId });
     const avg = reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length;
     await User.findByIdAndUpdate(req.body.targetUserId, { rating: avg });
     res.json(review);
 });
 
-// 5. Wallet & SOS
+// 4. Wallet & SOS
 app.get('/users/transactions/:userId', async (req, res) => {
     const user = await User.findById(req.params.userId);
     res.json(user ? user.transactions : []);
@@ -178,7 +179,7 @@ app.post('/emergency/sos', async (req, res) => {
     res.json({ success: true });
 });
 
-// 6. Chat
+// 5. Chat
 app.post('/chat/send', (req, res) => {
     io.emit('receive_message', { ...req.body, id: Date.now().toString(), timestamp: Date.now() });
     res.json({ success: true });
@@ -192,5 +193,5 @@ io.on('connection', (socket) => {
     });
 });
 
-app.get('/', (req, res) => res.send("Chalo Professional Backend is LIVE!"));
+app.get('/', (req, res) => res.send("Chalo API is 100% Operational!"));
 server.listen(process.env.PORT || 8080, "0.0.0.0", () => console.log("🚀 Server Running"));
