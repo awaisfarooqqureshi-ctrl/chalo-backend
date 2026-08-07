@@ -15,7 +15,7 @@ app.use(express.json());
 
 // MongoDB Connection
 mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
-    .then(() => console.log("✅ Chalo Database Connected (All Routes Ready)"))
+    .then(() => console.log("✅ Chalo Database Connected (Full & Synced)"))
     .catch(err => console.error("❌ MongoDB Error:", err));
 
 // --- MODELS ---
@@ -27,12 +27,13 @@ const UserSchema = new mongoose.Schema({
     walletBalance: { type: Number, default: 50 },
     rating: { type: Number, default: 5.0 },
     isOnline: { type: Boolean, default: false },
-    lastLat: Number,
-    lastLng: Number,
+    lastLat: { type: Number, default: 0 },
+    lastLng: { type: Number, default: 0 },
     driverRegistered: { type: Boolean, default: false },
     driverVerificationStatus: { type: String, default: 'not_submitted' },
-    vehicleInfo: Object,
-    documents: Object,
+    vehicleInfo: { type: Object, default: {} },
+    documents: { type: Object, default: {} },
+    welcomeBonusApplied: { type: Boolean, default: true },
     transactions: [{
         title: String, amount: Number, type: String, timestamp: { type: Date, default: Date.now }
     }]
@@ -74,9 +75,27 @@ const EmergencyAlertSchema = new mongoose.Schema({
 });
 const EmergencyAlert = mongoose.model('EmergencyAlert', EmergencyAlertSchema);
 
+// Helper function to map MongoDB user to Android UserProfile
+const mapToAndroidUser = (user) => {
+    return {
+        uid: user._id.toString(),
+        name: user.name || "User",
+        phoneNumber: user.phone,
+        role: user.role,
+        walletBalance: user.walletBalance,
+        driverRegistered: user.driverRegistered,
+        driverVerificationStatus: user.driverVerificationStatus,
+        isOnline: user.isOnline,
+        welcomeBonusApplied: user.welcomeBonusApplied,
+        vehicleInfo: user.vehicleInfo,
+        driverRating: user.rating,
+        passengerRating: user.rating
+    };
+};
+
 // --- ROUTES ---
 
-// 1. Auth & Profile
+// 1. Auth
 app.post('/auth/send-otp', async (req, res) => {
     console.log(`OTP Request for: ${req.body.phone}`);
     res.json({ message: "OTP sent successfully (Use 1234)" });
@@ -88,27 +107,36 @@ app.post('/auth/verify-otp', async (req, res) => {
         try {
             let user = await User.findOne({ phone });
             if (!user) {
-                user = await User.create({ phone, name: "New User", walletBalance: 50 });
-                user.transactions.push({ title: "Welcome Bonus", amount: 50, type: "CREDIT" });
-                await user.save();
+                user = await User.create({ 
+                    phone, 
+                    name: "New User", 
+                    walletBalance: 50,
+                    transactions: [{ title: "Welcome Bonus", amount: 50, type: "CREDIT" }]
+                });
             }
             const token = jwt.sign({ userId: user._id }, 'CHALO_SECRET');
-            res.json({ token, userId: user._id.toString(), user, message: "Success" });
+            res.json({ 
+                token, 
+                userId: user._id.toString(), 
+                user: mapToAndroidUser(user), 
+                message: "Success" 
+            });
         } catch(e) { res.status(500).send(e.message); }
     } else res.status(400).send("Invalid OTP");
 });
 
+// 2. User & Profile
 app.get('/users/profile/:userId', async (req, res) => {
     try {
         const user = await User.findById(req.params.userId);
-        user ? res.json(user) : res.status(404).send("User not found");
+        user ? res.json(mapToAndroidUser(user)) : res.status(404).send("User not found");
     } catch(e) { res.status(200).json({ name: "User" }); }
 });
 
 app.post('/users/update-profile', async (req, res) => {
     const { userId, name, role } = req.body;
     const user = await User.findByIdAndUpdate(userId, { name, role }, { new: true });
-    res.json(user);
+    res.json(mapToAndroidUser(user));
 });
 
 app.post('/users/register-driver', async (req, res) => {
@@ -116,7 +144,7 @@ app.post('/users/register-driver', async (req, res) => {
     const user = await User.findByIdAndUpdate(userId, { 
         driverRegistered: true, driverVerificationStatus: 'pending', vehicleInfo, documents 
     }, { new: true });
-    res.json({ success: true, user });
+    res.json({ success: true, user: mapToAndroidUser(user) });
 });
 
 app.post('/admin/approve-driver', async (req, res) => {
@@ -127,11 +155,11 @@ app.post('/admin/approve-driver', async (req, res) => {
             role: 'Driver',
             driverRegistered: true
         }, { new: true });
-        res.json({ success: true, user });
+        res.json({ success: true, user: mapToAndroidUser(user) });
     } catch(e) { res.status(500).send(e.message); }
 });
 
-// 2. Rides & Bidding
+// 3. Rides & Bidding
 app.post('/rides/request', async (req, res) => {
     const ride = await Ride.create(req.body);
     io.emit('new_ride_request', ride);
@@ -139,7 +167,8 @@ app.post('/rides/request', async (req, res) => {
 });
 
 app.post('/rides/bid', (req, res) => {
-    io.emit(`new_bid_${req.body.rideId}`, req.body);
+    const { rideId } = req.body;
+    io.emit(`new_bid_${rideId}`, req.body);
     res.json({ success: true });
 });
 
@@ -149,7 +178,7 @@ app.post('/rides/update-status', async (req, res) => {
     res.json(ride);
 });
 
-// 3. Carpool & Reviews
+// 4. Carpool & Reviews
 app.post('/carpool/offer', async (req, res) => {
     const offer = await CarpoolOffer.create(req.body);
     io.emit('new_carpool_offer', offer);
@@ -169,7 +198,7 @@ app.post('/users/review', async (req, res) => {
     res.json(review);
 });
 
-// 4. Wallet & SOS
+// 5. Wallet & SOS
 app.get('/users/transactions/:userId', async (req, res) => {
     const user = await User.findById(req.params.userId);
     res.json(user ? user.transactions : []);
@@ -181,7 +210,7 @@ app.post('/emergency/sos', async (req, res) => {
     res.json({ success: true });
 });
 
-// 5. Chat
+// 6. Chat
 app.post('/chat/send', (req, res) => {
     io.emit('receive_message', { ...req.body, id: Date.now().toString(), timestamp: Date.now() });
     res.json({ success: true });
@@ -190,7 +219,8 @@ app.post('/chat/send', (req, res) => {
 // --- SOCKETS ---
 io.on('connection', (socket) => {
     socket.on('update_location', async (data) => {
-        await User.findByIdAndUpdate(data.userId, { lastLat: data.lat, lastLng: data.lng, isOnline: true });
+        const { userId, lat, lng } = data;
+        await User.findByIdAndUpdate(userId, { lastLat: lat, lastLng: lng, isOnline: true });
         io.emit('location_updated', data);
     });
 });
