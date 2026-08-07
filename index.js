@@ -76,25 +76,35 @@ const EmergencyAlert = mongoose.model('EmergencyAlert', EmergencyAlertSchema);
 
 // --- ROUTES ---
 
-// 1. Auth & Profile
-app.post('/auth/send-otp', async (req, res) => {
-    res.json({ message: "OTP sent (Use 1234 for testing)" });
-});
-
+// ... (Auth route me tabdeeli)
 app.post('/auth/verify-otp', async (req, res) => {
     const { phone, otp } = req.body;
     if (otp === "1234") {
         let user = await User.findOne({ phone });
         if (!user) {
-            user = await User.create({ phone, walletBalance: 50 });
-            user.transactions.push({ title: "Welcome Bonus", amount: 50, type: "CREDIT" });
-            await user.save();
+            // Fix: Hamesha default name set karein taake UI me "null" na aaye
+            user = await User.create({ phone, name: "New User" });
         }
+        // Ensure user.name is never null
+        if (!user.name) user.name = "User";
+
         const token = jwt.sign({ userId: user._id }, 'CHALO_SECRET');
         res.json({ token, userId: user._id.toString(), user, message: "Success" });
     } else res.status(400).send("Invalid OTP");
 });
 
+// NEW: Admin Approval for Testing
+app.post('/admin/approve-driver', async (req, res) => {
+    const { userId } = req.body;
+    try {
+        const user = await User.findByIdAndUpdate(userId, { 
+            driverVerificationStatus: 'approved',
+            role: 'Driver',
+            driverRegistered: true
+        }, { new: true });
+        res.json({ success: true, user });
+    } catch(e) { res.status(500).send(e.message); }
+});
 app.get('/users/profile/:userId', async (req, res) => {
     try {
         const user = await User.findById(req.params.userId);
