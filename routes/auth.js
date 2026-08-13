@@ -6,9 +6,13 @@ const admin = require('firebase-admin');
 const User = require('../models/User');
 const Otp = require('../models/Otp');
 
-const VEEVO_CONFIG = {
-    apiKey: "51a0a0596b897986a43d3952635885d0",
-    baseUrl: "https://api.veevotech.com/v3/sendsms"
+// --- SENDPK.COM CONFIGURATION ---
+const SENDPK_CONFIG = {
+    username: process.env.SENDPK_USERNAME || "your_username",
+    password: process.env.SENDPK_PASSWORD || "your_password",
+    api_key: process.env.SENDPK_API_KEY || "your_api_key",
+    sender: process.env.SENDPK_SENDER || "Short Code", // Branded or Default
+    baseUrl: "https://sendpk.com/api/sms.php"
 };
 
 const CHALO_SECRET = 'CHALO_APP_SECRET_KEY_2024';
@@ -28,23 +32,41 @@ const mapToAndroidUser = (user) => {
     };
 };
 
-// 1. Send OTP
+// 1. Send OTP (Updated for Sendpk.com)
+// Note: Keeping the same route name for now to avoid changing the Android app
 router.post('/send-otp-veevo', async (req, res) => {
     let { phone } = req.body;
     if (!phone) return res.status(400).json({ success: false, message: "Phone required" });
 
+    // Sendpk format: 923XXXXXXXXX (no +)
     const cleanPhone = phone.replace('+', '').trim();
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
     const message = `Your Chalo App OTP is: ${otpCode}`;
 
     try {
-        const veevoUrl = `${VEEVO_CONFIG.baseUrl}?apikey=${VEEVO_CONFIG.apiKey}&receivernum=${cleanPhone}&textmessage=${encodeURIComponent(message)}&sendernum=Default`;
-        await axios.get(veevoUrl);
-        await Otp.findOneAndUpdate({ phone: cleanPhone }, { otp: otpCode }, { upsert: true });
-        res.json({ success: true, message: "OTP Sent" });
+        const sendpkUrl = `${SENDPK_CONFIG.baseUrl}?username=${SENDPK_CONFIG.username}&password=${SENDPK_CONFIG.password}&api_key=${SENDPK_CONFIG.api_key}&sender=${SENDPK_CONFIG.sender}&mobile=${cleanPhone}&message=${encodeURIComponent(message)}&type=text&format=json`;
+
+        console.log(`🚀 Requesting SMS from Sendpk for: ${cleanPhone}`);
+        const response = await axios.get(sendpkUrl);
+
+        console.log("📩 Sendpk Response:", JSON.stringify(response.data));
+
+        // Sendpk typically returns success status in the response
+        // Checking for common success patterns
+        if (response.data.status === "success" || response.data.code === "200" || response.data.message_id) {
+            await Otp.findOneAndUpdate({ phone: cleanPhone }, { otp: otpCode }, { upsert: true });
+            res.json({ success: true, message: "OTP Sent Successfully" });
+        } else {
+            console.error("❌ Sendpk Gateway Error:", response.data);
+            res.status(400).json({
+                success: false,
+                message: response.data.message || "Gateway Error",
+                details: response.data
+            });
+        }
     } catch (error) {
-        console.error("Veevo Error:", error.message);
-        res.status(500).json({ success: false });
+        console.error("❌ Sendpk Connectivity Error:", error.message);
+        res.status(500).json({ success: false, message: "SMS Gateway Unreachable" });
     }
 });
 
