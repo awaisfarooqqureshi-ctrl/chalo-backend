@@ -8,7 +8,7 @@ const TransactionSchema = new mongoose.Schema({
 }, { _id: false });
 
 const UserSchema = new mongoose.Schema({
-    _id: { type: String, required: true },
+    _id: { type: String, required: true }, // Clean Phone ID (923...)
     phone: { type: String, unique: true, required: true },
     name: { type: String, default: "" },
     role: { type: String, enum: ['Driver', 'Passenger', 'Admin'], default: 'Passenger' },
@@ -23,8 +23,9 @@ const UserSchema = new mongoose.Schema({
     driverRegistered: { type: Boolean, default: false },
     driverVerificationStatus: { type: String, default: 'not_submitted' },
     vehicleInfo: { type: Object, default: null },
+    documents: { type: Object, default: {} },
     welcomeBonusApplied: { type: Boolean, default: true },
     transactions: [TransactionSchema]
-}, { _id: false, timestamps: true });
+}, { timestamps: true }); // REMOVED _id: false
 
 module.exports = mongoose.model('User', UserSchema);
