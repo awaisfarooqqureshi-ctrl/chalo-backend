@@ -47,16 +47,22 @@ router.post('/send-otp-veevo', async (req, res) => {
         // FastSMSAlerts exact parameters: id, pass, mask, to, msg, type
         const fastSmsUrl = `${SMS_CONFIG.baseUrl}?id=${SMS_CONFIG.id}&pass=${SMS_CONFIG.pass}&mask=${encodeURIComponent(SMS_CONFIG.mask)}&to=${cleanPhone}&msg=${encodeURIComponent(message)}&type=json&lang=english`;
 
-        console.log(`🚀 Sending SMS to ${cleanPhone} via FastSMSAlerts...`);
+        console.log(`🚀 Sending SMS via FastSMSAlerts to: ${cleanPhone}`);
+        console.log(`🔗 Payload URL: ${fastSmsUrl.replace(SMS_CONFIG.pass, '********')}`); // Log masked URL for debugging
+
         const response = await axios.get(fastSmsUrl);
 
-        console.log("📩 FastSMS Response:", JSON.stringify(response.data));
+        console.log("📩 FastSMS Gateway Response:", JSON.stringify(response.data));
 
         // FastSMS returns an object, we check for common success indicators
-        if (response.data.status === "success" || response.data.message_id || response.status === 200) {
+        // Often it returns a message ID or a string indicating success
+        const isSuccess = response.data && (response.data.status === "success" || response.data.message_id || (typeof response.data === 'string' && response.data.includes("Successfully")));
+
+        if (isSuccess || response.status === 200) {
             await Otp.findOneAndUpdate({ phone: cleanPhone }, { otp: otpCode }, { upsert: true });
             res.json({ success: true, message: "OTP Sent Successfully" });
         } else {
+            console.error("❌ SMS Refused by Gateway:", response.data);
             res.status(400).json({
                 success: false,
                 message: "Gateway Refused SMS",
@@ -64,7 +70,7 @@ router.post('/send-otp-veevo', async (req, res) => {
             });
         }
     } catch (error) {
-        console.error("❌ SMS Error:", error.message);
+        console.error("❌ SMS Connection Error:", error.message);
         res.status(500).json({ success: false, message: "SMS Gateway Unreachable" });
     }
 });
@@ -81,6 +87,7 @@ router.post('/verify-otp-veevo', async (req, res) => {
 
         let user = await User.findById(cleanPhone);
         if (!user) {
+            console.log(`🆕 Creating brand new user record for: ${cleanPhone}`);
             user = await User.create({
                 _id: cleanPhone, phone: phone, name: "",
                 walletBalance: 50, transactions: [{ title: "Welcome Bonus", amount: 50, type: "CREDIT" }]
@@ -89,8 +96,20 @@ router.post('/verify-otp-veevo', async (req, res) => {
 
         const firebaseToken = await admin.auth().createCustomToken(user._id);
         const token = jwt.sign({ userId: user._id }, CHALO_SECRET);
-        res.json({ token, userId: user._id, _id: user._id, user: mapToAndroidUser(user), firebaseToken, message: "Success" });
+
+        const androidUser = mapToAndroidUser(user);
+        console.log(`✅ User ${cleanPhone} verified. Returning profile: ${JSON.stringify(androidUser)}`);
+
+        res.json({
+            token,
+            userId: user._id,
+            _id: user._id,
+            user: androidUser,
+            firebaseToken,
+            message: "Success"
+        });
     } catch (e) {
+        console.error("❌ Login Verification Error:", e.message);
         res.status(500).send("Login failed");
     }
 });
