@@ -6,13 +6,12 @@ const admin = require('firebase-admin');
 const User = require('../models/User');
 const Otp = require('../models/Otp');
 
-// --- SENDPK.COM (MAGIC MAYO) FINAL CONFIGURATION ---
-const SENDPK_CONFIG = {
-    username: process.env.SENDPK_USERNAME || "rchnp",
-    password: process.env.SENDPK_PASSWORD || "rchnp1281",
-    api_key: process.env.SENDPK_API_KEY || "51a0a0596b897986a43d3952635885d0",
-    sender: process.env.SENDPK_SENDER || "rchnp", // Brand/Masking
-    baseUrl: "https://sendpk.com/api/sms.php"
+// --- FASTSMSALERTS.COM CONFIGURATION ---
+const FASTSMS_CONFIG = {
+    id: process.env.FASTSMS_ID || "rchnp",
+    pass: process.env.FASTSMS_PASS || "rchnp1281",
+    mask: process.env.FASTSMS_MASK || "SMS Test.",
+    baseUrl: "https://fastsmsalerts.com/api/composesmsbulkotp"
 };
 
 const CHALO_SECRET = 'CHALO_APP_SECRET_KEY_2024';
@@ -34,7 +33,7 @@ const mapToAndroidUser = (user) => {
     };
 };
 
-// 1. Send OTP (Updated with your provided credentials)
+// 1. Send OTP (Updated for FastSMSAlerts.com)
 router.post('/send-otp-veevo', async (req, res) => {
     let { phone } = req.body;
     if (!phone) return res.status(400).json({ success: false, message: "Phone required" });
@@ -45,29 +44,29 @@ router.post('/send-otp-veevo', async (req, res) => {
     const message = `Your Chalo App OTP is: ${otpCode}. Valid for 5 minutes.`;
 
     try {
-        // Sendpk using GET/URL params for maximum reliability
-        const sendpkUrl = `${SENDPK_CONFIG.baseUrl}?username=${SENDPK_CONFIG.username}&password=${SENDPK_CONFIG.password}&api_key=${SENDPK_CONFIG.api_key}&sender=${encodeURIComponent(SENDPK_CONFIG.sender)}&mobile=${cleanPhone}&message=${encodeURIComponent(message)}&type=text&format=json`;
+        // FastSMSAlerts using the exact URL structure provided
+        const fastSmsUrl = `${FASTSMS_CONFIG.baseUrl}?id=${FASTSMS_CONFIG.id}&pass=${FASTSMS_CONFIG.pass}&mask=${encodeURIComponent(FASTSMS_CONFIG.mask)}&to=${cleanPhone}&lang=english&msg=${encodeURIComponent(message)}&type=json`;
 
-        console.log(`🚀 Sending SMS to ${cleanPhone} via Sendpk...`);
-        const response = await axios.get(sendpkUrl);
+        console.log(`🚀 Sending SMS to ${cleanPhone} via FastSMSAlerts...`);
+        const response = await axios.get(fastSmsUrl);
 
-        console.log("📩 Sendpk API Response:", JSON.stringify(response.data));
+        console.log("📩 FastSMS Response:", JSON.stringify(response.data));
 
-        // Check for success in response
-        if (response.data.status === "success" || response.data.code === "200" || response.data.message_id) {
+        // Assuming success if status is success or response contains message ID
+        if (response.data.status === "success" || response.data.includes && response.data.includes("Successfully") || response.status === 200) {
             await Otp.findOneAndUpdate({ phone: cleanPhone }, { otp: otpCode }, { upsert: true });
-            res.json({ success: true, message: "OTP Sent Successfully" });
+            res.json({ success: true, message: "OTP Sent Successfully via FastSMS" });
         } else {
             console.error("❌ SMS Refused:", response.data);
             res.status(400).json({
                 success: false,
-                message: response.data.message || "Gateway Refusal",
+                message: "Gateway Refusal",
                 details: response.data
             });
         }
     } catch (error) {
         console.error("❌ SMS Connection Error:", error.message);
-        res.status(500).json({ success: false, message: "SMS Server Unreachable" });
+        res.status(500).json({ success: false, message: "SMS Gateway Unreachable" });
     }
 });
 
