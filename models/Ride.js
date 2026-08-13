@@ -2,18 +2,48 @@ const mongoose = require('mongoose');
 
 const RideSchema = new mongoose.Schema({
     passengerId: { type: String, required: true },
-    passengerName: { type: String, default: "" },
+    passengerName: { type: String, default: "Customer" },
+    passengerPhoto: { type: String, default: "" },
+    passengerPhone: { type: String, default: "" },
+
     driverId: { type: String, default: null },
     driverName: { type: String, default: "" },
+    driverPhoto: { type: String, default: "" },
+    driverPhone: { type: String, default: "" },
+
     pickupLocation: { type: String, required: true },
     destination: { type: String, required: true },
     pickupLat: { type: Number, required: true },
     pickupLng: { type: Number, required: true },
     destLat: { type: Number, default: 0 },
     destLng: { type: Number, default: 0 },
+
     fare: { type: Number, default: 0 },
-    serviceType: { type: String, enum: ['CITY_RIDE', 'DELIVERY', 'CARPOOL', 'CITY_TO_CITY'], default: 'CITY_RIDE' },
-    status: { type: String, enum: ['PENDING', 'ACCEPTED', 'COMPLETED', 'CANCELLED'], default: 'PENDING' },
+    offeredFare: { type: Number, default: 0 },
+    originalFare: { type: Number, default: 0 },
+
+    serviceType: { type: String, default: 'CITY_RIDE' },
+    status: { type: String, default: 'FINDING_DRIVER' },
+    vehicleType: { type: String, default: 'Car' },
+
+    stops: { type: Array, default: [] },
+
+    // Delivery Specific
+    itemType: { type: String, default: "" },
+    itemWeight: { type: String, default: "" },
+    senderName: { type: String, default: "" },
+    senderPhone: { type: String, default: "" },
+    receiverName: { type: String, default: "" },
+    receiverPhone: { type: String, default: "" },
+    deliveryNote: { type: String, default: "" },
+
+    // Intercity
+    scheduledTimestamp: { type: Number, default: null },
+    luggageSize: { type: String, default: "None" },
+
+    // Carpool
+    seatsBooked: { type: Number, default: 1 },
+
     timestamp: { type: Date, default: Date.now }
 }, { timestamps: true });
 
