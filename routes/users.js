@@ -15,6 +15,7 @@ const mapToAndroidUser = (user) => {
         driverRegistered: user.driverRegistered || false,
         driverVerificationStatus: user.driverVerificationStatus || "not_submitted",
         isOnline: user.isOnline || false,
+        welcomeBonusApplied: user.welcomeBonusApplied || false,
         vehicleInfo: user.vehicleInfo || null,
         gender: user.gender || "",
         dateOfBirth: user.dateOfBirth || "",
