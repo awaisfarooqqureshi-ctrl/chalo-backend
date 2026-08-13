@@ -6,12 +6,12 @@ const admin = require('firebase-admin');
 const User = require('../models/User');
 const Otp = require('../models/Otp');
 
-// --- FASTSMSALERTS.COM CONFIGURATION ---
-const FASTSMS_CONFIG = {
-    id: process.env.FASTSMS_ID || "rchnp",
-    pass: process.env.FASTSMS_PASS || "rchnp1281",
-    mask: process.env.FASTSMS_MASK || "SMS Test.",
-    baseUrl: "https://fastsmsalerts.com/api/composesmsbulkotp"
+// --- MAGIC MAYO / CUBIX TECHNOLOGY CONFIGURATION ---
+const MAGIC_MAYO_CONFIG = {
+    username: process.env.MAGIC_MAYO_USER || "rchnp",
+    password: process.env.MAGIC_MAYO_PASS || "rchnp1281",
+    mask: process.env.MAGIC_MAYO_MASK || "SMS Test.", // Approved Mask from your report
+    baseUrl: "http://magicmayo.pk/api/sendsms.php" // Standard URL for MM/Cubix
 };
 
 const CHALO_SECRET = 'CHALO_APP_SECRET_KEY_2024';
@@ -33,29 +33,29 @@ const mapToAndroidUser = (user) => {
     };
 };
 
-// 1. Send OTP (Updated for FastSMSAlerts.com)
+// 1. Send OTP (Updated for Magic Mayo / Cubix)
 router.post('/send-otp-veevo', async (req, res) => {
     let { phone } = req.body;
     if (!phone) return res.status(400).json({ success: false, message: "Phone required" });
 
-    // Format: 923XXXXXXXXX
+    // Format: 923XXXXXXXXX (no +)
     const cleanPhone = phone.replace('+', '').trim();
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-    const message = `Your Chalo App OTP is: ${otpCode}. Valid for 5 minutes.`;
+    const message = `Your Chalo App OTP is: ${otpCode}`;
 
     try {
-        // FastSMSAlerts using the exact URL structure provided
-        const fastSmsUrl = `${FASTSMS_CONFIG.baseUrl}?id=${FASTSMS_CONFIG.id}&pass=${FASTSMS_CONFIG.pass}&mask=${encodeURIComponent(FASTSMS_CONFIG.mask)}&to=${cleanPhone}&lang=english&msg=${encodeURIComponent(message)}&type=json`;
+        // Standard Magic Mayo URL with parameters
+        const mmUrl = `${MAGIC_MAYO_CONFIG.baseUrl}?username=${MAGIC_MAYO_CONFIG.username}&password=${MAGIC_MAYO_CONFIG.password}&to=${cleanPhone}&message=${encodeURIComponent(message)}&mask=${encodeURIComponent(MAGIC_MAYO_CONFIG.mask)}`;
 
-        console.log(`🚀 Sending SMS to ${cleanPhone} via FastSMSAlerts...`);
-        const response = await axios.get(fastSmsUrl);
+        console.log(`🚀 Sending SMS to ${cleanPhone} via Magic Mayo...`);
+        const response = await axios.get(mmUrl);
 
-        console.log("📩 FastSMS Response:", JSON.stringify(response.data));
+        console.log("📩 Magic Mayo Response:", JSON.stringify(response.data));
 
-        // Assuming success if status is success or response contains message ID
-        if (response.data.status === "success" || response.data.includes && response.data.includes("Successfully") || response.status === 200) {
+        // Magic Mayo success: Often returns a numeric ID or starts with "OK"
+        if (response.data.toString().toLowerCase().includes("ok") || response.status === 200) {
             await Otp.findOneAndUpdate({ phone: cleanPhone }, { otp: otpCode }, { upsert: true });
-            res.json({ success: true, message: "OTP Sent Successfully via FastSMS" });
+            res.json({ success: true, message: "OTP Sent Successfully via Magic Mayo" });
         } else {
             console.error("❌ SMS Refused:", response.data);
             res.status(400).json({
