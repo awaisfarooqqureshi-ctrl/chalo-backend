@@ -13,10 +13,12 @@ const RideSchema = new mongoose.Schema({
 
     pickupLocation: { type: String, required: true },
     destination: { type: String, required: true },
+
+    // Aligned with Android App property names (Lon vs Lng)
     pickupLat: { type: Number, required: true },
-    pickupLng: { type: Number, required: true },
-    destLat: { type: Number, default: 0 },
-    destLng: { type: Number, default: 0 },
+    pickupLon: { type: Number, required: true },
+    destinationLat: { type: Number, required: true },
+    destinationLon: { type: Number, required: true },
 
     fare: { type: Number, default: 0 },
     offeredFare: { type: Number, default: 0 },
@@ -44,7 +46,7 @@ const RideSchema = new mongoose.Schema({
     // Carpool
     seatsBooked: { type: Number, default: 1 },
 
-    timestamp: { type: Date, default: Date.now }
+    timestamp: { type: Number, default: () => Date.now() }
 }, { timestamps: true });
 
 module.exports = mongoose.model('Ride', RideSchema);
