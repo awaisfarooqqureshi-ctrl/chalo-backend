@@ -21,6 +21,12 @@ app.use(express.json({
 }));
 app.use(express.urlencoded({ extended: true }));
 
+// Global Request Logger for Debugging
+app.use((req, res, next) => {
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+    next();
+});
+
 // MongoDB Connection
 mongoose.connect(process.env.MONGO_URI)
     .then(() => console.log("✅ Chalo DB Connected Successfully"))
@@ -31,9 +37,10 @@ try {
     if (process.env.FIREBASE_SERVICE_ACCOUNT) {
         const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
         admin.initializeApp({
-            credential: admin.credential.cert(serviceAccount)
+            credential: admin.credential.cert(serviceAccount),
+            databaseURL: "https://indrive-d69e1-default-rtdb.firebaseio.com"
         });
-        console.log("✅ Firebase Admin Initialized");
+        console.log("✅ Firebase Admin Initialized with RTDB Support");
     }
 } catch (error) {
     console.error("❌ Firebase Initialization Error:", error.message);

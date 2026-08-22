@@ -4,100 +4,127 @@ const axios = require('axios');
 const crypto = require('crypto');
 const User = require('../models/User');
 
-const RAPID_GATEWAY_API_KEY = process.env.RAPID_API_KEY;
-const RAPID_WEBHOOK_SALT = process.env.RAPID_WEBHOOK_SALT;
-const RAPID_WEBHOOK_SALT_PREVIOUS = process.env.RAPID_WEBHOOK_SALT_PREVIOUS;
-const RAPID_API_URL = "https://api.rapidgateway.pk/v1/payments";
-const RAPID_WEBHOOK_URL = process.env.RAPID_WEBHOOK_URL;
+const MERCHANT_ID = process.env.RAPID_MERCHANT_ID;
+const CLIENT_SECRET = process.env.RAPID_CLIENT_SECRET;
+const WEBHOOK_SALT = process.env.RAPID_WEBHOOK_SALT;
+const BASE_URL = process.env.RAPID_API_BASE_URL || "https://secure.rapid-gateway.com";
 
+const SUCCESS_URL = process.env.RAPID_SUCCESS_URL;
+const FAILURE_URL = process.env.RAPID_FAILURE_URL;
+const CHECKOUT_URL = process.env.RAPID_CHECKOUT_URL;
+
+/** ── Step 1: Get Bearer Token ────────────────────────────── */
+async function getAccessToken() {
+    try {
+        const auth = Buffer.from(`${MERCHANT_ID}:${CLIENT_SECRET}`).toString('base64');
+        const response = await axios.post(`${BASE_URL}/oauth2/token`,
+            'grant_type=client_credentials',
+            {
+                headers: {
+                    'Authorization': `Basic ${auth}`,
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                }
+            }
+        );
+        return response.data.access_token;
+    } catch (error) {
+        console.error('Failed to get RapidGateway token:', error.response?.data || error.message);
+        throw error;
+    }
+}
+
+/** ── Webhook Signature Verification ──────────────────────── */
 function isValidWebhookSignature(req) {
-    const timestamp = String(req.get('X-RapidGateway-Timestamp') || '').trim();
-    const receivedSignature = String(req.get('X-RapidGateway-Signature') || '').trim().toUpperCase();
+    const timestamp = req.get('X-RapidGateway-Timestamp');
+    const signature = req.get('X-RapidGateway-Signature');
     const rawBody = req.rawBody;
 
-    if (!timestamp || !receivedSignature || !rawBody || !/^\d+$/.test(timestamp)) return false;
-
-    const timestampSeconds = Number(timestamp);
-    if (!Number.isSafeInteger(timestampSeconds) || Math.abs(Date.now() / 1000 - timestampSeconds) > 300) return false;
+    if (!timestamp || !signature || !rawBody || !WEBHOOK_SALT) return false;
 
     const signedPayload = `${timestamp}.${rawBody.toString('utf8')}`;
-    return [RAPID_WEBHOOK_SALT, RAPID_WEBHOOK_SALT_PREVIOUS]
-        .filter(Boolean)
-        .some((salt) => {
-            const expectedSignature = crypto
-                .createHmac('sha256', salt)
-                .update(signedPayload, 'utf8')
-                .digest('hex')
-                .toUpperCase();
-            const expected = Buffer.from(expectedSignature, 'utf8');
-            const received = Buffer.from(receivedSignature, 'utf8');
-            return expected.length === received.length && crypto.timingSafeEqual(expected, received);
-        });
+    const expectedSignature = crypto
+        .createHmac('sha256', WEBHOOK_SALT)
+        .update(signedPayload, 'utf8')
+        .digest('hex')
+        .toUpperCase();
+
+    return crypto.timingSafeEqual(
+        Buffer.from(expectedSignature),
+        Buffer.from(signature.toUpperCase())
+    );
 }
 
 router.post('/initiate', async (req, res) => {
-    const paymentIntent = req.body?.paymentIntent || req.body;
-    const amount = Number(paymentIntent?.amount);
-    const currency = String(paymentIntent?.currency || 'PKR').trim();
-    const method = String(paymentIntent?.method || '').trim();
-    const details = paymentIntent?.details;
-    const customer = paymentIntent?.customer;
-    const userId = String(customer?.userId || req.body?.userId || '').trim();
-    const phone = String(customer?.phone || req.body?.phone || '').trim();
-
-    if (!RAPID_GATEWAY_API_KEY) {
-        return res.status(503).json({ success: false, message: 'Payment service is not configured.' });
-    }
-
-    if (!Number.isFinite(amount) || amount <= 0 || !currency || !method || !userId || !phone) {
-        return res.status(400).json({ success: false, message: 'A complete payment intent is required.' });
-    }
-
-    const merchantReference = `CHALO-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-    const callbackUrl = RAPID_WEBHOOK_URL || `https://${req.get('host')}/payments/callback`;
-
     try {
-        const response = await axios.post(RAPID_API_URL, {
-            amount,
-            currency,
-            method,
-            details,
-            customer: { userId, phone },
-            callback_url: callbackUrl,
-            merchant_reference: merchantReference,
-            metadata: { userId, merchantReference }
-        }, { headers: { 'Authorization': `Bearer ${RAPID_GATEWAY_API_KEY}` } });
+        const { amount, customer, basketId } = req.body.paymentIntent || req.body;
 
-        const transactionId = response.data?.transaction_id ||
-            response.data?.transactionId || response.data?.id || merchantReference;
-        const checkoutUrl = response.data?.checkout_url || response.data?.checkoutUrl || null;
-        res.json({ success: true, transaction_id: transactionId, checkout_url: checkoutUrl });
+        // 1. Get Token
+        const token = await getAccessToken();
+
+        // 2. Submit Transaction (application/x-www-form-urlencoded)
+        const params = new URLSearchParams();
+        params.append('MERCHANT_ID', MERCHANT_ID);
+        params.append('MERCHANT_NAME', 'Chalo Drive');
+        params.append('TXNAMT', amount.toString());
+        params.append('CURRENCY_CODE', 'PKR');
+        params.append('CUSTOMER_MOBILE_NO', customer.phone);
+        params.append('CUSTOMER_EMAIL_ADDRESS', 'customer@chalo.app'); // Default if not provided
+        params.append('BASKET_ID', basketId || `CHALO-${Date.now()}`);
+        params.append('SUCCESS_URL', SUCCESS_URL || `https://${req.get('host')}/payments/success`);
+        params.append('FAILURE_URL', FAILURE_URL || `https://${req.get('host')}/payments/failure`);
+        params.append('CHECKOUT_URL', CHECKOUT_URL || `https://${req.get('host')}/payments/complete`);
+        params.append('VERSION', 'MY_VER_1.0');
+        params.append('PROCCODE', '0');
+        params.append('ORDER_DATE', new Date().toISOString().split('T')[0]);
+
+        const response = await axios.post(`${BASE_URL}/rapid/process-transaction`,
+            params.toString(),
+            {
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                maxRedirects: 0,
+                validateStatus: (status) => status === 302 || (status >= 200 && status < 300)
+            }
+        );
+
+        const checkoutUrl = response.headers.location;
+        if (!checkoutUrl) throw new Error("No redirect URL received from Gateway");
+
+        res.json({ success: true, checkout_url: checkoutUrl });
     } catch (error) {
-        console.error('Rapid Gateway initiation failed:', error.response?.data || error.message);
-        res.status(error.response?.status && error.response.status >= 400 && error.response.status < 500 ? error.response.status : 502)
-            .json({ success: false, message: 'Payment gateway request failed.' });
+        console.error('RapidGateway Initiation Error:', error.message);
+        res.status(500).json({ success: false, message: 'Payment initialization failed' });
     }
 });
 
+// Authoritative Webhook outcome
 router.post('/callback', async (req, res) => {
-    if (!RAPID_WEBHOOK_SALT) {
-        return res.status(503).send('Webhook verification is not configured.');
-    }
-
     if (!isValidWebhookSignature(req)) {
-        return res.status(401).send('Invalid webhook signature.');
+        return res.status(401).send('Invalid signature');
     }
 
-    const status = String(req.body?.status || '').trim().toUpperCase();
-    const amount = Number(req.body?.amount);
-    const userId = String(req.body?.metadata?.userId || '').trim();
-    if (status === 'SUCCESS' && Number.isFinite(amount) && amount > 0 && userId) {
-        const cleanId = userId.replace('+', '').trim();
-        await User.findByIdAndUpdate(cleanId, {
-            $inc: { walletBalance: amount },
-            $push: { transactions: { title: "Wallet Top-up", amount, type: "CREDIT" } }
+    const { status, amount, merchantTransactionId } = req.body;
+
+    if (status === 'SUCCESS') {
+        // Find user by basket ID (stored in MongoDB transactions or extract from ID)
+        // For simplicity, we can also pass userId in BASKET_ID like "USERID-TIMESTAMP"
+        const userId = merchantTransactionId.split('-')[0];
+
+        await User.findByIdAndUpdate(userId, {
+            $inc: { walletBalance: Number(amount) },
+            $push: { transactions: {
+                title: "Wallet Top-up",
+                amount: Number(amount),
+                type: "CREDIT",
+                timestamp: Date.now(),
+                status: "COMPLETED"
+            }}
         });
+        console.log(`Wallet updated for user ${userId}: +${amount}`);
     }
+
     res.status(200).send("OK");
 });
 

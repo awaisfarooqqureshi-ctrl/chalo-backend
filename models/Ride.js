@@ -11,14 +11,18 @@ const RideSchema = new mongoose.Schema({
     driverPhoto: { type: String, default: "" },
     driverPhone: { type: String, default: "" },
 
+    id: { type: String }, // Virtual ID for Android compatibility
+
     pickupLocation: { type: String, required: true },
     destination: { type: String, required: true },
 
     // Aligned with Android App property names (Lon vs Lng)
     pickupLat: { type: Number, required: true },
     pickupLon: { type: Number, required: true },
+    pickupLng: { type: Number }, // Support alternate
     destinationLat: { type: Number, required: true },
     destinationLon: { type: Number, required: true },
+    destinationLng: { type: Number }, // Support alternate
 
     fare: { type: Number, default: 0 },
     offeredFare: { type: Number, default: 0 },
@@ -29,6 +33,7 @@ const RideSchema = new mongoose.Schema({
     vehicleType: { type: String, default: 'Car' },
 
     stops: { type: Array, default: [] },
+    offers: { type: Array, default: [] }, // Array of DriverOffer objects
 
     // Delivery Specific
     itemType: { type: String, default: "" },
@@ -46,7 +51,17 @@ const RideSchema = new mongoose.Schema({
     // Carpool
     seatsBooked: { type: Number, default: 1 },
 
-    timestamp: { type: Number, default: () => Date.now() }
+    timestamp: { type: Number, default: () => Date.now() },
+    lastPing: { type: Number, default: () => Date.now() }
 }, { timestamps: true });
+
+// Pre-save mapping for alternate field names
+RideSchema.pre('save', function (next) {
+    if (this.pickupLng && !this.pickupLon) this.pickupLon = this.pickupLng;
+    if (this.destinationLng && !this.destinationLon) this.destinationLon = this.destinationLng;
+    if (this.fare && !this.offeredFare) this.offeredFare = this.fare;
+    if (this.offeredFare && !this.fare) this.fare = this.offeredFare;
+    next();
+});
 
 module.exports = mongoose.model('Ride', RideSchema);
