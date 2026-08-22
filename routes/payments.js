@@ -1,11 +1,39 @@
 const express = require('express');
 const router = express.Router();
 const axios = require('axios');
+const crypto = require('crypto');
 const User = require('../models/User');
 
 const RAPID_GATEWAY_API_KEY = process.env.RAPID_API_KEY;
+const RAPID_WEBHOOK_SALT = process.env.RAPID_WEBHOOK_SALT;
+const RAPID_WEBHOOK_SALT_PREVIOUS = process.env.RAPID_WEBHOOK_SALT_PREVIOUS;
 const RAPID_API_URL = "https://api.rapidgateway.pk/v1/payments";
 const RAPID_WEBHOOK_URL = process.env.RAPID_WEBHOOK_URL;
+
+function isValidWebhookSignature(req) {
+    const timestamp = String(req.get('X-RapidGateway-Timestamp') || '').trim();
+    const receivedSignature = String(req.get('X-RapidGateway-Signature') || '').trim().toUpperCase();
+    const rawBody = req.rawBody;
+
+    if (!timestamp || !receivedSignature || !rawBody || !/^\d+$/.test(timestamp)) return false;
+
+    const timestampSeconds = Number(timestamp);
+    if (!Number.isSafeInteger(timestampSeconds) || Math.abs(Date.now() / 1000 - timestampSeconds) > 300) return false;
+
+    const signedPayload = `${timestamp}.${rawBody.toString('utf8')}`;
+    return [RAPID_WEBHOOK_SALT, RAPID_WEBHOOK_SALT_PREVIOUS]
+        .filter(Boolean)
+        .some((salt) => {
+            const expectedSignature = crypto
+                .createHmac('sha256', salt)
+                .update(signedPayload, 'utf8')
+                .digest('hex')
+                .toUpperCase();
+            const expected = Buffer.from(expectedSignature, 'utf8');
+            const received = Buffer.from(receivedSignature, 'utf8');
+            return expected.length === received.length && crypto.timingSafeEqual(expected, received);
+        });
+}
 
 router.post('/initiate', async (req, res) => {
     const paymentIntent = req.body?.paymentIntent || req.body;
@@ -52,6 +80,14 @@ router.post('/initiate', async (req, res) => {
 });
 
 router.post('/callback', async (req, res) => {
+    if (!RAPID_WEBHOOK_SALT) {
+        return res.status(503).send('Webhook verification is not configured.');
+    }
+
+    if (!isValidWebhookSignature(req)) {
+        return res.status(401).send('Invalid webhook signature.');
+    }
+
     const status = String(req.body?.status || '').trim().toUpperCase();
     const amount = Number(req.body?.amount);
     const userId = String(req.body?.metadata?.userId || '').trim();

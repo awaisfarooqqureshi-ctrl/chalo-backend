@@ -14,7 +14,11 @@ const io = new Server(server, { cors: { origin: "*" } });
 app.set('socketio', io);
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({
+    verify: (req, res, buffer) => {
+        req.rawBody = Buffer.from(buffer);
+    }
+}));
 app.use(express.urlencoded({ extended: true }));
 
 // MongoDB Connection
