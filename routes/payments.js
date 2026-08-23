@@ -108,21 +108,47 @@ router.post('/callback', async (req, res) => {
     const { status, amount, merchantTransactionId } = req.body;
 
     if (status === 'SUCCESS') {
-        // Find user by basket ID (stored in MongoDB transactions or extract from ID)
-        // For simplicity, we can also pass userId in BASKET_ID like "USERID-TIMESTAMP"
         const userId = merchantTransactionId.split('-')[0];
+        const amountNum = Number(amount);
 
-        await User.findByIdAndUpdate(userId, {
-            $inc: { walletBalance: Number(amount) },
-            $push: { transactions: {
+        // 1. Update MongoDB (Backup)
+        try {
+            await User.findByIdAndUpdate(userId, {
+                $inc: { walletBalance: amountNum },
+                $push: { transactions: {
+                    title: "Wallet Top-up",
+                    amount: amountNum,
+                    type: "CREDIT",
+                    timestamp: Date.now(),
+                    status: "COMPLETED"
+                }}
+            });
+        } catch (e) { console.error("Mongo Update Failed:", e.message); }
+
+        // 2. Update RTDB (Source of Truth for App)
+        try {
+            const admin = require('firebase-admin');
+            const db = admin.database();
+            const userRef = db.ref(`users/${userId}`);
+
+            // Atomic transaction for balance
+            await userRef.child('walletBalance').transaction((current) => (current || 0) + amountNum);
+
+            // Add transaction to history
+            const transId = userRef.child('transactions').push().key;
+            await userRef.child(`transactions/${transId}`).set({
+                id: transId,
                 title: "Wallet Top-up",
-                amount: Number(amount),
+                amount: amountNum,
                 type: "CREDIT",
                 timestamp: Date.now(),
                 status: "COMPLETED"
-            }}
-        });
-        console.log(`Wallet updated for user ${userId}: +${amount}`);
+            });
+
+            console.log(`✅ RTDB Wallet updated for user ${userId}: +${amountNum}`);
+        } catch (e) {
+            console.error("RTDB Wallet Update Failed:", e.message);
+        }
     }
 
     res.status(200).send("OK");
