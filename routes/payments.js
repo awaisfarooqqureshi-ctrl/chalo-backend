@@ -65,8 +65,12 @@ router.post('/initiate', async (req, res) => {
         }
 
         if (!MERCHANT_ID || !CLIENT_SECRET) {
-            console.error("RapidGateway credentials missing in environment variables.");
-            return res.status(503).json({ success: false, message: 'Payment service not configured on server.' });
+            const availableKeys = Object.keys(process.env).filter(k => k.includes('RAPID') || k.includes('MERCHANT') || k.includes('SECRET'));
+            console.error("RapidGateway credentials missing. Available related keys:", availableKeys);
+            return res.status(503).json({
+                success: false,
+                message: `Payment service not configured. Missing: ${!MERCHANT_ID ? 'MERCHANT_ID' : ''} ${!CLIENT_SECRET ? 'CLIENT_SECRET' : ''}`
+            });
         }
 
         // 1. Get Token
