@@ -21,11 +21,26 @@ router.get('/directions', async (req, res) => {
 // 2. Reverse Geocode (Proxy)
 router.get('/reverse', async (req, res) => {
     const { lat, lon } = req.query;
+    console.log(`🔍 Reverse Geocoding for: ${lat}, ${lon}`);
+
+    if (!MAPS_API_KEY) {
+        console.error("❌ Maps Key Missing on Server");
+        return res.status(503).send("Maps key missing on server");
+    }
+
     try {
         const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lon}&key=${MAPS_API_KEY}`;
         const response = await axios.get(url);
+
+        if (response.data.status !== "OK") {
+            console.error(`❌ Google API Error: ${response.data.status}`, response.data.error_message || "");
+        } else {
+            console.log(`✅ Found Address: ${response.data.results[0]?.formatted_address}`);
+        }
+
         res.json(response.data);
     } catch (e) {
+        console.error("❌ Geocode Proxy Error:", e.message);
         res.status(500).send(e.message);
     }
 });
@@ -33,11 +48,16 @@ router.get('/reverse', async (req, res) => {
 // 3. Search Places (Proxy)
 router.get('/search', async (req, res) => {
     const { query } = req.query;
+    console.log(`🔍 Searching for: ${query}`);
+
+    if (!MAPS_API_KEY) return res.status(503).send("Maps key missing");
+
     try {
-        const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${query}&key=${MAPS_API_KEY}`;
+        const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${query}&key=${MAPS_API_KEY}&region=pk`;
         const response = await axios.get(url);
         res.json(response.data);
     } catch (e) {
+        console.error("❌ Search Proxy Error:", e.message);
         res.status(500).send(e.message);
     }
 });
