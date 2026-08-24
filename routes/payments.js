@@ -119,10 +119,15 @@ router.post('/initiate', async (req, res) => {
         res.json({ success: true, checkout_url: checkoutUrl });
 
     } catch (error) {
-        console.error('Initiation Failed:', error.message);
+        const errorData = error.response?.data;
+        console.error('RapidGateway Initiation Error:', {
+            message: error.message,
+            gatewayResponse: errorData,
+            status: error.response?.status
+        });
         res.status(500).json({
             success: false,
-            message: error.message || 'Payment initialization failed'
+            message: typeof errorData === 'string' ? errorData : (errorData?.message || error.message || 'Payment initialization failed')
         });
     }
 });
