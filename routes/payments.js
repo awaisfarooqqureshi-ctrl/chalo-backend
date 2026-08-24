@@ -81,7 +81,8 @@ router.post('/initiate', async (req, res) => {
         else if (normalizedPhone.startsWith('92')) normalizedPhone = '0' + normalizedPhone.slice(2);
         else if (!normalizedPhone.startsWith('0') && normalizedPhone.length === 10) normalizedPhone = '0' + normalizedPhone;
 
-        const basketId = `CHALO${Date.now()}${customer.userId.toString().replace(/[^a-zA-Z0-9]/g, '').slice(-5)}`;
+        // Ensure Basket ID is alphanumeric and safe, similar to SBX example
+        const basketId = `SBX-${Date.now()}`;
 
         const params = new URLSearchParams();
         params.append('MERCHANT_ID', numericMerchantId);
