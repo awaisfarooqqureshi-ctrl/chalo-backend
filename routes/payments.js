@@ -82,20 +82,20 @@ router.post('/initiate', async (req, res) => {
         else if (!normalizedPhone.startsWith('0') && normalizedPhone.length === 10) normalizedPhone = '0' + normalizedPhone;
 
         // Ensure Basket ID is alphanumeric and safe, similar to SBX example
-        const basketId = `SBX-${Date.now()}`;
+        const basketId = `SBX${Date.now()}`;
 
         const params = new URLSearchParams();
         params.append('MERCHANT_ID', numericMerchantId);
-        params.append('MERCHANT_NAME', 'Chalo Drive');
-        params.append('TXNAMT', parseFloat(amount).toFixed(2));
+        params.append('MERCHANT_NAME', 'Sandbox Test Merchant');
+        params.append('TXNAMT', parseFloat(amount).toFixed(0)); // Try integer format first
         params.append('CURRENCY_CODE', 'PKR');
         params.append('CUSTOMER_MOBILE_NO', normalizedPhone);
-        params.append('CUSTOMER_EMAIL_ADDRESS', 'customer@chalo.app');
+        params.append('CUSTOMER_EMAIL_ADDRESS', 'customer@example.com');
         params.append('BASKET_ID', basketId);
-        params.append('TXNDESC', 'Wallet Topup');
-        params.append('ORDER_DATE', new Date().toISOString().split('T')[0]);
-        params.append('SUCCESS_URL', SUCCESS_URL || `https://${req.get('host')}/payments/success`);
-        params.append('FAILURE_URL', FAILURE_URL || `https://${req.get('host')}/payments/failure`);
+        params.append('TXNDESC', 'test payment');
+        params.append('ORDER_DATE', new Date().toLocaleDateString('en-US')); // MM/DD/YYYY
+        params.append('SUCCESS_URL', (RAPID_ENV === 'SANDBOX') ? 'https://httpbin.org/get' : (SUCCESS_URL || `https://${req.get('host')}/payments/success`));
+        params.append('FAILURE_URL', (RAPID_ENV === 'SANDBOX') ? 'https://httpbin.org/get' : (FAILURE_URL || `https://${req.get('host')}/payments/failure`));
         params.append('CHECKOUT_URL', CHECKOUT_URL || `https://${req.get('host')}/payments/complete`);
         params.append('VERSION', 'MY_VER_1.0');
         params.append('PROCCODE', '0');
