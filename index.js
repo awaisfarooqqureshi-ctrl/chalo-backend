@@ -27,12 +27,7 @@ app.use((req, res, next) => {
     next();
 });
 
-// MongoDB Connection
-mongoose.connect(process.env.MONGO_URI)
-    .then(() => console.log("✅ Chalo DB Connected Successfully"))
-    .catch(err => console.error("❌ MongoDB Connection Error:", err));
-
-// Firebase Admin Setup
+// Firebase Admin Setup (PRIMARY DATABASE)
 try {
     if (process.env.FIREBASE_SERVICE_ACCOUNT) {
         const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
@@ -40,7 +35,7 @@ try {
             credential: admin.credential.cert(serviceAccount),
             databaseURL: "https://indrive-d69e1-default-rtdb.firebaseio.com"
         });
-        console.log("✅ Firebase Admin Initialized with RTDB Support");
+        console.log("✅ Firebase Admin Initialized - All data on RTDB");
     }
 } catch (error) {
     console.error("❌ Firebase Initialization Error:", error.message);
@@ -54,24 +49,15 @@ app.use('/carpool', require('./routes/carpool'));
 app.use('/payments', require('./routes/payments'));
 app.use('/emergency', require('./routes/emergency'));
 
-// Sockets Logic
-const User = require('./models/User');
+// Sockets Logic (Pure Firebase/Logic, no Mongo)
 io.on('connection', (socket) => {
     console.log("New client connected:", socket.id);
 
     socket.on('update_location', async (data) => {
         if (data.userId) {
             const cleanId = data.userId.replace('+', '').trim();
-            try {
-                await User.findByIdAndUpdate(cleanId, {
-                    lastLat: data.lat,
-                    lastLng: data.lng,
-                    isOnline: true
-                });
-                io.emit('location_updated', { ...data, userId: cleanId });
-            } catch (e) {
-                console.error("Socket location update error:", e.message);
-            }
+            // Broadcast location directly via sockets for real-time maps
+            io.emit('location_updated', { ...data, userId: cleanId });
         }
     });
 
