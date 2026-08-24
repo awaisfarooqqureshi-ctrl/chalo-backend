@@ -3,17 +3,22 @@ const router = express.Router();
 const axios = require('axios');
 const crypto = require('crypto');
 const User = require('../models/User');
+const admin = require('firebase-admin');
 
-const MERCHANT_ID = process.env.RAPID_MERCHANT_ID || process.env.MERCHANT_ID;
-const CLIENT_SECRET = process.env.RAPID_CLIENT_SECRET || process.env.CLIENT_SECRET;
+// Detect Environment (SANDBOX or LIVE)
+const RAPID_ENV = (process.env.RAPID_ENVIRONMENT || 'SANDBOX').toUpperCase();
+
+// Credentials logic: Use provided env vars, or fallback to Rapid Sandbox defaults
+const MERCHANT_ID = process.env.RAPID_MERCHANT_ID || process.env.MERCHANT_ID || (RAPID_ENV === 'SANDBOX' ? 'client' : null);
+const CLIENT_SECRET = process.env.RAPID_CLIENT_SECRET || process.env.CLIENT_SECRET || (RAPID_ENV === 'SANDBOX' ? 'secret' : null);
 const WEBHOOK_SALT = process.env.RAPID_WEBHOOK_SALT || process.env.WEBHOOK_SALT;
-const BASE_URL = process.env.RAPID_API_BASE_URL || "https://secure.rapid-gateway.com";
 
+const BASE_URL = "https://secure.rapid-gateway.com";
 const SUCCESS_URL = process.env.RAPID_SUCCESS_URL;
 const FAILURE_URL = process.env.RAPID_FAILURE_URL;
 const CHECKOUT_URL = process.env.RAPID_CHECKOUT_URL;
 
-/** ── Step 1: Get Bearer Token ────────────────────────────── */
+/** ── Step 1: Get Access Token (OAuth2) ───────────────────────── */
 async function getAccessToken() {
     try {
         const auth = Buffer.from(`${MERCHANT_ID}:${CLIENT_SECRET}`).toString('base64');
@@ -28,8 +33,8 @@ async function getAccessToken() {
         );
         return response.data.access_token;
     } catch (error) {
-        console.error('Failed to get RapidGateway token:', error.response?.data || error.message);
-        throw error;
+        console.error('RapidGateway Token Error:', error.response?.data || error.message);
+        throw new Error('Failed to authenticate with Payment Gateway');
     }
 }
 
@@ -57,35 +62,26 @@ function isValidWebhookSignature(req) {
 router.post('/initiate', async (req, res) => {
     try {
         const paymentData = req.body.paymentIntent || req.body;
-        const { amount, customer, basketId } = paymentData;
-
-        if (!amount || !customer?.phone) {
-            console.error("Missing payment data:", { amount, customer });
-            return res.status(400).json({ success: false, message: 'Amount and Customer Phone are required.' });
-        }
+        const { amount, customer } = paymentData;
 
         if (!MERCHANT_ID || !CLIENT_SECRET) {
-            const allKeys = Object.keys(process.env);
-            console.error("CRITICAL: RapidGateway credentials missing in process.env!");
-            console.error("All available environment keys (names only):", allKeys);
-            return res.status(503).json({
-                success: false,
-                message: "Server configuration missing. Please check Railway Environment Variables."
-            });
+            console.error("Missing RapidGateway Credentials. Current Env:", RAPID_ENV);
+            return res.status(503).json({ success: false, message: 'Payment credentials not configured.' });
         }
 
         // 1. Get Token
         const token = await getAccessToken();
 
-        // 2. Submit Transaction (application/x-www-form-urlencoded)
+        // 2. Prepare Transaction Data
+        const basketId = `${customer.userId}-${Date.now()}`;
         const params = new URLSearchParams();
         params.append('MERCHANT_ID', MERCHANT_ID);
         params.append('MERCHANT_NAME', 'Chalo Drive');
         params.append('TXNAMT', amount.toString());
         params.append('CURRENCY_CODE', 'PKR');
         params.append('CUSTOMER_MOBILE_NO', customer.phone);
-        params.append('CUSTOMER_EMAIL_ADDRESS', 'customer@chalo.app'); // Default if not provided
-        params.append('BASKET_ID', basketId || `CHALO-${Date.now()}`);
+        params.append('CUSTOMER_EMAIL_ADDRESS', 'customer@chalo.app');
+        params.append('BASKET_ID', basketId);
         params.append('SUCCESS_URL', SUCCESS_URL || `https://${req.get('host')}/payments/success`);
         params.append('FAILURE_URL', FAILURE_URL || `https://${req.get('host')}/payments/failure`);
         params.append('CHECKOUT_URL', CHECKOUT_URL || `https://${req.get('host')}/payments/complete`);
@@ -93,7 +89,12 @@ router.post('/initiate', async (req, res) => {
         params.append('PROCCODE', '0');
         params.append('ORDER_DATE', new Date().toISOString().split('T')[0]);
 
-        const response = await axios.post(`${BASE_URL}/rapid/process-transaction`,
+        // Sandbox check: Use /sandbox endpoint if in sandbox mode
+        const endpoint = (RAPID_ENV === 'SANDBOX') ? '/sandbox/process-transaction' : '/rapid/process-transaction';
+
+        console.log(`Initiating ${RAPID_ENV} payment for User: ${customer.userId}, Amount: ${amount}`);
+
+        const response = await axios.post(`${BASE_URL}${endpoint}`,
             params.toString(),
             {
                 headers: {
@@ -109,56 +110,36 @@ router.post('/initiate', async (req, res) => {
         if (!checkoutUrl) throw new Error("No redirect URL received from Gateway");
 
         res.json({ success: true, checkout_url: checkoutUrl });
+
     } catch (error) {
-        const errorData = error.response?.data;
-        console.error('RapidGateway Initiation Error:', {
-            message: error.message,
-            data: errorData,
-            status: error.response?.status
-        });
+        console.error('Initiation Failed:', error.message);
         res.status(500).json({
             success: false,
-            message: errorData?.message || error.message || 'Payment initialization failed'
+            message: error.message || 'Payment initialization failed'
         });
     }
 });
 
-// Authoritative Webhook outcome
 router.post('/callback', async (req, res) => {
-    if (!isValidWebhookSignature(req)) {
+    // Note: Sandbox testing sometimes doesn't send signed webhooks if manually triggered
+    if (RAPID_ENV !== 'SANDBOX' && !isValidWebhookSignature(req)) {
         return res.status(401).send('Invalid signature');
     }
 
     const { status, amount, merchantTransactionId } = req.body;
 
-    if (status === 'SUCCESS') {
+    if (status === 'SUCCESS' || status === 'completed') {
         const userId = merchantTransactionId.split('-')[0];
         const amountNum = Number(amount);
 
-        // 1. Update MongoDB (Backup)
         try {
-            await User.findByIdAndUpdate(userId, {
-                $inc: { walletBalance: amountNum },
-                $push: { transactions: {
-                    title: "Wallet Top-up",
-                    amount: amountNum,
-                    type: "CREDIT",
-                    timestamp: Date.now(),
-                    status: "COMPLETED"
-                }}
-            });
-        } catch (e) { console.error("Mongo Update Failed:", e.message); }
-
-        // 2. Update RTDB (Source of Truth for App)
-        try {
-            const admin = require('firebase-admin');
             const db = admin.database();
             const userRef = db.ref(`users/${userId}`);
 
-            // Atomic transaction for balance
+            // Update RTDB Balance
             await userRef.child('walletBalance').transaction((current) => (current || 0) + amountNum);
 
-            // Add transaction to history
+            // Log Transaction
             const transId = userRef.child('transactions').push().key;
             await userRef.child(`transactions/${transId}`).set({
                 id: transId,
@@ -169,9 +150,9 @@ router.post('/callback', async (req, res) => {
                 status: "COMPLETED"
             });
 
-            console.log(`✅ RTDB Wallet updated for user ${userId}: +${amountNum}`);
+            console.log(`✅ Wallet updated for user ${userId}: +${amountNum}`);
         } catch (e) {
-            console.error("RTDB Wallet Update Failed:", e.message);
+            console.error("Database Update Failed:", e.message);
         }
     }
 
