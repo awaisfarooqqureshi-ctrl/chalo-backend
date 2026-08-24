@@ -72,23 +72,24 @@ router.post('/initiate', async (req, res) => {
         // 1. Get Token
         const token = await getAccessToken();
 
-        // 2. Prepare Transaction Data (Normalize phone for RapidGateway)
+        // 2. Prepare Transaction Data (Strict alignment with docs)
         let normalizedPhone = customer.phone.trim().replace(/\s+/g, '');
         if (normalizedPhone.startsWith('+92')) normalizedPhone = '0' + normalizedPhone.slice(3);
         else if (normalizedPhone.startsWith('92')) normalizedPhone = '0' + normalizedPhone.slice(2);
         else if (!normalizedPhone.startsWith('0') && normalizedPhone.length === 10) normalizedPhone = '0' + normalizedPhone;
 
-        const basketId = `${customer.userId.toString().replace(/[^a-zA-Z0-9]/g, '')}-${Date.now()}`;
+        // Ensure Basket ID is alphanumeric and safe
+        const basketId = `CHALO${Date.now()}${customer.userId.toString().replace(/[^a-zA-Z0-9]/g, '').slice(-5)}`;
 
         const params = new URLSearchParams();
         params.append('MERCHANT_ID', MERCHANT_ID);
         params.append('MERCHANT_NAME', 'Chalo Drive');
-        params.append('TXNAMT', amount.toString());
+        params.append('TXNAMT', parseFloat(amount).toFixed(2)); // Force 100.00 format
         params.append('CURRENCY_CODE', 'PKR');
         params.append('CUSTOMER_MOBILE_NO', normalizedPhone);
         params.append('CUSTOMER_EMAIL_ADDRESS', 'customer@chalo.app');
         params.append('BASKET_ID', basketId);
-        params.append('TXNDESC', 'Wallet Top-up');
+        params.append('TXNDESC', 'Wallet Topup');
         params.append('ORDER_DATE', new Date().toISOString().split('T')[0]);
         params.append('SUCCESS_URL', SUCCESS_URL || `https://${req.get('host')}/payments/success`);
         params.append('FAILURE_URL', FAILURE_URL || `https://${req.get('host')}/payments/failure`);
@@ -98,7 +99,7 @@ router.post('/initiate', async (req, res) => {
 
         const endpoint = (RAPID_ENV === 'SANDBOX') ? '/sandbox/process-transaction' : '/rapid/process-transaction';
 
-        console.log(`🚀 Sending to ${endpoint}:`, params.toString());
+        console.log(`🚀 Sending to RapidGateway (${RAPID_ENV}):`, params.toString());
 
         const response = await axios.post(`${BASE_URL}${endpoint}`,
             params.toString(),
