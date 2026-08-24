@@ -47,6 +47,7 @@ app.use('/users', require('./routes/users'));
 app.use('/rides', require('./routes/rides'));
 app.use('/carpool', require('./routes/carpool'));
 app.use('/payments', require('./routes/payments'));
+app.use('/maps', require('./routes/maps'));
 app.use('/emergency', require('./routes/emergency'));
 
 // Sockets Logic (Pure Firebase/Logic, no Mongo)
