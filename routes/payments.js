@@ -72,14 +72,20 @@ router.post('/initiate', async (req, res) => {
         // 1. Get Token
         const token = await getAccessToken();
 
-        // 2. Prepare Transaction Data
-        const basketId = `${customer.userId}-${Date.now()}`;
+        // 2. Prepare Transaction Data (Normalize phone for RapidGateway)
+        let normalizedPhone = customer.phone.trim().replace(/\s+/g, '');
+        if (normalizedPhone.startsWith('+92')) normalizedPhone = '0' + normalizedPhone.slice(3);
+        else if (normalizedPhone.startsWith('92')) normalizedPhone = '0' + normalizedPhone.slice(2);
+        else if (!normalizedPhone.startsWith('0') && normalizedPhone.length === 10) normalizedPhone = '0' + normalizedPhone;
+
+        const basketId = `${customer.userId.toString().replace(/[^a-zA-Z0-9]/g, '')}-${Date.now()}`;
+
         const params = new URLSearchParams();
         params.append('MERCHANT_ID', MERCHANT_ID);
         params.append('MERCHANT_NAME', 'Chalo Drive');
         params.append('TXNAMT', amount.toString());
         params.append('CURRENCY_CODE', 'PKR');
-        params.append('CUSTOMER_MOBILE_NO', customer.phone);
+        params.append('CUSTOMER_MOBILE_NO', normalizedPhone);
         params.append('CUSTOMER_EMAIL_ADDRESS', 'customer@chalo.app');
         params.append('BASKET_ID', basketId);
         params.append('SUCCESS_URL', SUCCESS_URL || `https://${req.get('host')}/payments/success`);
@@ -92,7 +98,7 @@ router.post('/initiate', async (req, res) => {
         // Sandbox check: Use /sandbox endpoint if in sandbox mode
         const endpoint = (RAPID_ENV === 'SANDBOX') ? '/sandbox/process-transaction' : '/rapid/process-transaction';
 
-        console.log(`Initiating ${RAPID_ENV} payment for User: ${customer.userId}, Amount: ${amount}`);
+        console.log(`🚀 Initiating ${RAPID_ENV} payment: User=${customer.userId}, Phone=${normalizedPhone}, Amount=${amount}, Basket=${basketId}`);
 
         const response = await axios.post(`${BASE_URL}${endpoint}`,
             params.toString(),
