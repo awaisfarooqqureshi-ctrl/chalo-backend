@@ -14,9 +14,6 @@ const CLIENT_SECRET = process.env.RAPID_CLIENT_SECRET || process.env.CLIENT_SECR
 const WEBHOOK_SALT = process.env.RAPID_WEBHOOK_SALT || process.env.WEBHOOK_SALT;
 
 const BASE_URL = "https://secure.rapid-gateway.com";
-const SUCCESS_URL = process.env.RAPID_SUCCESS_URL;
-const FAILURE_URL = process.env.RAPID_FAILURE_URL;
-const CHECKOUT_URL = process.env.RAPID_CHECKOUT_URL;
 
 /** ── Step 1: Get Access Token (OAuth2) ───────────────────────── */
 async function getAccessToken() {
@@ -34,7 +31,7 @@ async function getAccessToken() {
         return response.data.access_token;
     } catch (error) {
         console.error('RapidGateway Token Error:', error.response?.data || error.message);
-        throw new Error('Failed to authenticate with Payment Gateway');
+        throw new Error('Payment Gateway Authentication Failed');
     }
 }
 
@@ -65,46 +62,38 @@ router.post('/initiate', async (req, res) => {
         const { amount, customer } = paymentData;
 
         if (!MERCHANT_ID || !CLIENT_SECRET) {
-            console.error("Missing RapidGateway Credentials. Current Env:", RAPID_ENV);
             return res.status(503).json({ success: false, message: 'Payment credentials not configured.' });
         }
 
-        // 1. Get Token (Auth usually uses 'client' for sandbox)
+        // 1. Get Token
         const token = await getAccessToken();
 
-        // 2. Prepare Transaction Data (Strict alignment with docs)
-        // RapidGateway requires a NUMERIC Merchant ID for the transaction itself.
-        const numericMerchantId = (MERCHANT_ID === 'client') ? '920' : MERCHANT_ID;
-
+        // 2. Prepare Transaction Data (Normalize phone for RapidGateway)
         let normalizedPhone = customer.phone.trim().replace(/\s+/g, '');
         if (normalizedPhone.startsWith('+92')) normalizedPhone = '0' + normalizedPhone.slice(3);
         else if (normalizedPhone.startsWith('92')) normalizedPhone = '0' + normalizedPhone.slice(2);
         else if (!normalizedPhone.startsWith('0') && normalizedPhone.length === 10) normalizedPhone = '0' + normalizedPhone;
 
-        // Ensure Basket ID is alphanumeric and safe, similar to SBX example
-        const basketId = `SBX${Date.now()}`;
+        // RapidGateway Sandbox requires BASKET_ID to be unique and order-like
+        const basketId = `ORDER-${Date.now()}`;
 
         const params = new URLSearchParams();
-        params.append('MERCHANT_ID', numericMerchantId);
-        params.append('MERCHANT_NAME', 'Sandbox Test Merchant');
-        params.append('TXNAMT', parseFloat(amount).toFixed(0)); // Try integer format first
+        params.append('MERCHANT_ID', (MERCHANT_ID === 'client') ? '920' : MERCHANT_ID);
+        params.append('MERCHANT_NAME', 'Chalo Drive');
+        params.append('TXNAMT', amount.toString());
         params.append('CURRENCY_CODE', 'PKR');
         params.append('CUSTOMER_MOBILE_NO', normalizedPhone);
-        params.append('CUSTOMER_EMAIL_ADDRESS', 'customer@example.com');
+        params.append('CUSTOMER_EMAIL_ADDRESS', 'customer@chalo.app');
         params.append('BASKET_ID', basketId);
-        params.append('TXNDESC', 'test payment');
-        params.append('ORDER_DATE', new Date().toLocaleDateString('en-US')); // MM/DD/YYYY
-        params.append('SUCCESS_URL', (RAPID_ENV === 'SANDBOX') ? 'https://httpbin.org/get' : (SUCCESS_URL || `https://${req.get('host')}/payments/success`));
-        params.append('FAILURE_URL', (RAPID_ENV === 'SANDBOX') ? 'https://httpbin.org/get' : (FAILURE_URL || `https://${req.get('host')}/payments/failure`));
-        params.append('CHECKOUT_URL', CHECKOUT_URL || `https://${req.get('host')}/payments/complete`);
+        params.append('SUCCESS_URL', `https://chalo-backend-production-0bd5.up.railway.app/payments/success`);
+        params.append('FAILURE_URL', `https://chalo-backend-production-0bd5.up.railway.app/payments/failure`);
+        params.append('CHECKOUT_URL', `https://chalo-backend-production-0bd5.up.railway.app/payments/complete`);
         params.append('VERSION', 'MY_VER_1.0');
         params.append('PROCCODE', '0');
 
-        const endpoint = (RAPID_ENV === 'SANDBOX') ? '/sandbox/process-transaction' : '/rapid/process-transaction';
+        console.log(`🚀 Initiating RapidGateway (${RAPID_ENV}):`, params.toString());
 
-        console.log(`🚀 Sending to RapidGateway (${RAPID_ENV}) with ID ${numericMerchantId}:`, params.toString());
-
-        const response = await axios.post(`${BASE_URL}${endpoint}`,
+        const response = await axios.post(`${BASE_URL}/rapid/process-transaction`,
             params.toString(),
             {
                 headers: {
@@ -130,13 +119,12 @@ router.post('/initiate', async (req, res) => {
         });
         res.status(500).json({
             success: false,
-            message: typeof errorData === 'string' ? errorData : (errorData?.message || error.message || 'Payment initialization failed')
+            message: errorData?.message || error.message || 'Payment initialization failed'
         });
     }
 });
 
 router.post('/callback', async (req, res) => {
-    // Note: Sandbox testing sometimes doesn't send signed webhooks if manually triggered
     if (RAPID_ENV !== 'SANDBOX' && !isValidWebhookSignature(req)) {
         return res.status(401).send('Invalid signature');
     }
@@ -144,47 +132,20 @@ router.post('/callback', async (req, res) => {
     const { status, amount, merchantTransactionId } = req.body;
 
     if (status === 'SUCCESS' || status === 'completed') {
-        const userId = merchantTransactionId.split('-')[0];
-        const amountNum = Number(amount);
-
-        try {
-            const db = admin.database();
-            const userRef = db.ref(`users/${userId}`);
-
-            // Update RTDB Balance
-            await userRef.child('walletBalance').transaction((current) => (current || 0) + amountNum);
-
-            // Log Transaction
-            const transId = userRef.child('transactions').push().key;
-            await userRef.child(`transactions/${transId}`).set({
-                id: transId,
-                title: "Wallet Top-up",
-                amount: amountNum,
-                type: "CREDIT",
-                timestamp: Date.now(),
-                status: "COMPLETED"
-            });
-
-            console.log(`✅ Wallet updated for user ${userId}: +${amountNum}`);
-        } catch (e) {
-            console.error("Database Update Failed:", e.message);
+        const userId = req.body.metadata?.userId || merchantTransactionId?.split('-')[0];
+        if (userId) {
+            try {
+                const db = admin.database();
+                const userRef = db.ref(`users/${userId}`);
+                await userRef.child('walletBalance').transaction((current) => (current || 0) + Number(amount));
+            } catch (e) { console.error("Balance Update Failed:", e.message); }
         }
     }
-
     res.status(200).send("OK");
 });
 
-// Helper pages for WebView redirects
-router.get('/success', (req, res) => {
-    res.send("<html><body style='text-align:center;padding-top:50px;'><h1>✅ Payment Successful!</h1><p>You can now close this window.</p></body></html>");
-});
-
-router.get('/failure', (req, res) => {
-    res.send("<html><body style='text-align:center;padding-top:50px;'><h1>❌ Payment Failed</h1><p>Please try again from the app.</p></body></html>");
-});
-
-router.get('/complete', (req, res) => {
-    res.send("<html><body style='text-align:center;padding-top:50px;'><h1>Processing...</h1><p>Returning you to the app.</p></body></html>");
-});
+router.get('/success', (req, res) => res.send("<h1>✅ Payment Successful!</h1>"));
+router.get('/failure', (req, res) => res.send("<h1>❌ Payment Failed</h1>"));
+router.get('/complete', (req, res) => res.send("<h1>Processing...</h1>"));
 
 module.exports = router;
