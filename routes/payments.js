@@ -92,8 +92,14 @@ router.post('/initiate', async (req, res) => {
 
         if (!checkoutUrl) throw new Error("No Redirect URL found in response");
 
-        console.log(`✅ Redirect Captured: ${checkoutUrl}`);
-        return res.json({ success: true, checkout_url: checkoutUrl });
+        console.log(`✅ Success! Redirect Captured: ${checkoutUrl}`);
+
+        // Ensure app gets this URL in the JSON body
+        return res.status(200).json({
+            success: true,
+            checkout_url: checkoutUrl,
+            message: "Redirect captured successfully"
+        });
 
     } catch (error) {
         console.error('Initiation Error:', error.message);
