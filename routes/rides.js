@@ -88,6 +88,73 @@ router.post('/bid', async (req, res) => {
     }
 });
 
+// 4. Accept Bid: Match Driver and Passenger
+router.post('/accept-bid', async (req, res) => {
+    try {
+        const { rideId, offerId, driverId } = req.body;
+        const db = admin.database();
+        const rideRef = db.ref(`active_rides/${rideId}`);
+        const driverRef = db.ref(`users/${driverId}`);
+
+        const rideSnap = await rideRef.get();
+        if (!rideSnap.exists()) return res.status(404).send("Ride not found");
+
+        const ride = rideSnap.val();
+        const driverSnap = await driverRef.get();
+        if (!driverSnap.exists()) return res.status(404).send("Driver not found");
+
+        const driver = driverSnap.val();
+        const offers = ride.offers || [];
+
+        // 1. Calculate Commission
+        const configSnap = await db.ref('admin_config/settings').get();
+        const commissionRate = configSnap.val()?.commission_rate || 10;
+        const acceptedOffer = offers.find(o => o.id === offerId || o.driverId === driverId);
+        if (!acceptedOffer) return res.status(404).send("Offer not found");
+
+        const commissionAmount = (acceptedOffer.bidFare * commissionRate) / 100;
+
+        // 2. Update Offers status (one accepted, others rejected)
+        const updatedOffers = offers.map(o => {
+            if (o.id === offerId || o.driverId === driverId) return { ...o, status: 'ACCEPTED' };
+            return { ...o, status: 'REJECTED' };
+        });
+
+        // 3. Update Driver Record (Wallet + Status)
+        await driverRef.update({
+            walletBalance: (driver.walletBalance || 0) - commissionAmount,
+            isOnline: ride.serviceType === 'CARPOOL', // Stay online if carpooling
+            driverStatus: ride.serviceType === 'CARPOOL' ? 'ON_CARPOOL_PICKUP' : 'ON_CITY_RIDE'
+        });
+
+        // 4. Update Ride Record
+        const rideUpdates = {
+            status: 'ACCEPTED',
+            driverId: driverId,
+            driverName: driver.name,
+            driverPhoto: driver.profilePhoto,
+            driverPhone: driver.phoneNumber,
+            offeredFare: acceptedOffer.bidFare,
+            offers: updatedOffers,
+            commissionAmount: commissionAmount,
+            vehicleInfo: {
+                type: ride.vehicleType,
+                model: driver.vehicleInfo?.model || acceptedOffer.vehicleModel,
+                numberPlate: driver.vehicleInfo?.numberPlate || acceptedOffer.vehiclePlate
+            }
+        };
+
+        await rideRef.update(rideUpdates);
+
+        console.log(`🤝 Ride ${rideId} accepted by Passenger for Driver ${driver.name}`);
+        res.json({ ...ride, ...rideUpdates });
+
+    } catch (e) {
+        console.error("Accept Bid Error:", e.message);
+        res.status(500).send(e.message);
+    }
+});
+
 router.get('/history/:userId', async (req, res) => {
     // History logic is now handled on App side by observing user_history node
     res.json([]);
