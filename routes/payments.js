@@ -117,9 +117,10 @@ router.get('/success', async (req, res) => {
     const { status, amount, basket_id } = req.query;
 
     if (status === 'success' || status === 'SUCCESS') {
-        // Extract UserID from SBX-UserID-Timestamp
+        // Extract UserID robustly from SBX-UserID-Timestamp
+        // UID could contain hyphens, so we join everything between first and last dash
         const parts = basket_id?.split('-') || [];
-        const userId = parts[1]; // Get the middle part
+        const userId = parts.slice(1, -1).join('-');
 
         if (userId) {
             await updateBalance(userId, amount, basket_id);
@@ -135,7 +136,7 @@ router.post('/callback', async (req, res) => {
 
     if (status === 'SUCCESS' || status === 'completed') {
         const parts = merchantTransactionId?.split('-') || [];
-        const userId = parts[1];
+        const userId = parts.slice(1, -1).join('-');
         if (userId) await updateBalance(userId, amount, merchantTransactionId);
     }
     res.status(200).send("OK");
