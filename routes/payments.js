@@ -88,17 +88,17 @@ router.post('/initiate', async (req, res) => {
         params.append('CUSTOMER_MOBILE_NO', normalizedPhone);
         params.append('CUSTOMER_EMAIL_ADDRESS', 'customer@chalo.app');
         params.append('BASKET_ID', basketId);
+        params.append('TXNDESC', 'Wallet Top-up');
+        params.append('ORDER_DATE', new Date().toISOString().split('T')[0]);
         params.append('SUCCESS_URL', SUCCESS_URL || `https://${req.get('host')}/payments/success`);
         params.append('FAILURE_URL', FAILURE_URL || `https://${req.get('host')}/payments/failure`);
         params.append('CHECKOUT_URL', CHECKOUT_URL || `https://${req.get('host')}/payments/complete`);
         params.append('VERSION', 'MY_VER_1.0');
         params.append('PROCCODE', '0');
-        params.append('ORDER_DATE', new Date().toISOString().split('T')[0]);
 
-        // Sandbox check: Use /sandbox endpoint if in sandbox mode
         const endpoint = (RAPID_ENV === 'SANDBOX') ? '/sandbox/process-transaction' : '/rapid/process-transaction';
 
-        console.log(`🚀 Initiating ${RAPID_ENV} payment: User=${customer.userId}, Phone=${normalizedPhone}, Amount=${amount}, Basket=${basketId}`);
+        console.log(`🚀 Sending to ${endpoint}:`, params.toString());
 
         const response = await axios.post(`${BASE_URL}${endpoint}`,
             params.toString(),
