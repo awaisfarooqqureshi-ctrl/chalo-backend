@@ -48,13 +48,13 @@ router.post('/initiate', async (req, res) => {
         if (normalizedPhone.startsWith('+92')) normalizedPhone = '0' + normalizedPhone.slice(3);
         else if (normalizedPhone.startsWith('92')) normalizedPhone = '0' + normalizedPhone.slice(2);
 
-        // Match the SBX-1787... format from your test
-        const basketId = `SBX-${Date.now()}`;
+        // Standardize Basket ID to include UserId so we can identify the user on callback
+        const basketId = `${customer.userId}-${Date.now()}`;
 
         const params = new URLSearchParams();
         params.append('MERCHANT_ID', (MERCHANT_ID === 'client') ? '920' : MERCHANT_ID);
         params.append('MERCHANT_NAME', 'Chalo Drive');
-        params.append('TXNAMT', Math.round(amount).toString()); // No decimals like your test
+        params.append('TXNAMT', Math.round(amount).toString());
         params.append('CURRENCY_CODE', 'PKR');
         params.append('CUSTOMER_MOBILE_NO', normalizedPhone);
         params.append('CUSTOMER_EMAIL_ADDRESS', 'customer@example.com');
