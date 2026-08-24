@@ -48,16 +48,16 @@ router.post('/initiate', async (req, res) => {
         if (normalizedPhone.startsWith('+92')) normalizedPhone = '0' + normalizedPhone.slice(3);
         else if (normalizedPhone.startsWith('92')) normalizedPhone = '0' + normalizedPhone.slice(2);
 
-        // Standardize Basket ID to include UserId so we can identify the user on callback
-        const basketId = `${customer.userId}-${Date.now()}`;
+        // Standardize Basket ID with SBX- prefix for Sandbox success
+        const basketId = `SBX-${customer.userId}-${Date.now()}`;
 
         const params = new URLSearchParams();
-        params.append('MERCHANT_ID', (MERCHANT_ID === 'client') ? '920' : MERCHANT_ID);
+        params.append('MERCHANT_ID', (MERCHANT_ID === 'client' || !MERCHANT_ID) ? '920' : MERCHANT_ID);
         params.append('MERCHANT_NAME', 'Chalo Test');
         params.append('TXNAMT', Math.round(amount).toString());
         params.append('CURRENCY_CODE', 'PKR');
         params.append('CUSTOMER_MOBILE_NO', normalizedPhone);
-        params.append('CUSTOMER_EMAIL_ADDRESS', 'customer@example.com');
+        params.append('CUSTOMER_EMAIL_ADDRESS', 'customer@chalo.app');
         params.append('BASKET_ID', basketId);
         params.append('SUCCESS_URL', `https://chalo-backend-production-0bd5.up.railway.app/payments/success`);
         params.append('FAILURE_URL', `https://chalo-backend-production-0bd5.up.railway.app/payments/failure`);
