@@ -53,7 +53,7 @@ router.post('/initiate', async (req, res) => {
 
         const params = new URLSearchParams();
         params.append('MERCHANT_ID', (MERCHANT_ID === 'client') ? '920' : MERCHANT_ID);
-        params.append('MERCHANT_NAME', 'Chalo Drive');
+        params.append('MERCHANT_NAME', 'Chalo Test');
         params.append('TXNAMT', Math.round(amount).toString());
         params.append('CURRENCY_CODE', 'PKR');
         params.append('CUSTOMER_MOBILE_NO', normalizedPhone);
@@ -65,11 +65,14 @@ router.post('/initiate', async (req, res) => {
         params.append('VERSION', 'MY_VER_1.0');
         params.append('PROCCODE', '0');
 
-        console.log(`🚀 Sending to RapidGateway (${RAPID_ENV}):`, params.toString());
+        // FORCE SANDBOX ENDPOINT FOR TESTING
+        const endpoint = '/sandbox/process-transaction';
+
+        console.log(`🚀 FORCING SANDBOX: Sending to ${endpoint}:`, params.toString());
 
         let checkoutUrl = null;
         try {
-            const response = await axios.post(`${BASE_URL}/rapid/process-transaction`,
+            const response = await axios.post(`${BASE_URL}${endpoint}`,
                 params.toString(),
                 {
                     headers: {
