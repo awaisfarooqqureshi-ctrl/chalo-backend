@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const User = require('../models/User');
 const admin = require('firebase-admin');
 
-// Detect Environment (SANDBOX or LIVE)
+// Detect Environment
 const RAPID_ENV = (process.env.RAPID_ENVIRONMENT || 'SANDBOX').toUpperCase();
 
 // Credentials
@@ -14,6 +14,34 @@ const CLIENT_SECRET = process.env.RAPID_CLIENT_SECRET || process.env.CLIENT_SECR
 const WEBHOOK_SALT = process.env.RAPID_WEBHOOK_SALT || process.env.WEBHOOK_SALT;
 
 const BASE_URL = "https://secure.rapid-gateway.com";
+
+/** ── Helper: Update User Balance in RTDB ─────────────────── */
+async function updateBalance(userId, amount, basketId) {
+    if (!userId || !amount) return;
+    try {
+        const db = admin.database();
+        const userRef = db.ref(`users/${userId}`);
+
+        // 1. Atomic Balance Update
+        await userRef.child('walletBalance').transaction((current) => (current || 0) + Number(amount));
+
+        // 2. Add Transaction Log
+        const transId = userRef.child('transactions').push().key;
+        await userRef.child(`transactions/${transId}`).set({
+            id: transId,
+            title: "Wallet Top-up",
+            amount: Number(amount),
+            type: "CREDIT",
+            timestamp: Date.now(),
+            status: "COMPLETED",
+            reference: basketId
+        });
+
+        console.log(`✅ Wallet Updated for ${userId}: +${amount}`);
+    } catch (e) {
+        console.error("❌ Balance Update Failed:", e.message);
+    }
+}
 
 /** ── Step 1: Get Access Token ────────────────────────────── */
 async function getAccessToken() {
@@ -40,20 +68,18 @@ router.post('/initiate', async (req, res) => {
         const paymentData = req.body.paymentIntent || req.body;
         const { amount, customer } = paymentData;
 
-        // 1. Get Token
         const token = await getAccessToken();
 
-        // 2. Prepare Data (Strictly matching successful test)
         let normalizedPhone = customer.phone.trim().replace(/\s+/g, '');
         if (normalizedPhone.startsWith('+92')) normalizedPhone = '0' + normalizedPhone.slice(3);
         else if (normalizedPhone.startsWith('92')) normalizedPhone = '0' + normalizedPhone.slice(2);
 
-        // Standardize Basket ID with SBX- prefix for Sandbox success
+        // Format: SBX-UserID-Timestamp
         const basketId = `SBX-${customer.userId}-${Date.now()}`;
 
         const params = new URLSearchParams();
-        params.append('MERCHANT_ID', (MERCHANT_ID === 'client' || !MERCHANT_ID) ? '920' : MERCHANT_ID);
-        params.append('MERCHANT_NAME', 'Chalo Test');
+        params.append('MERCHANT_ID', (MERCHANT_ID === 'client') ? '920' : MERCHANT_ID);
+        params.append('MERCHANT_NAME', 'Chalo Drive');
         params.append('TXNAMT', Math.round(amount).toString());
         params.append('CURRENCY_CODE', 'PKR');
         params.append('CUSTOMER_MOBILE_NO', normalizedPhone);
@@ -65,59 +91,55 @@ router.post('/initiate', async (req, res) => {
         params.append('VERSION', 'MY_VER_1.0');
         params.append('PROCCODE', '0');
 
-        // CHOOSE ENDPOINT BASED ON ENVIRONMENT
         const endpoint = (RAPID_ENV === 'LIVE') ? '/rapid/process-transaction' : '/sandbox/process-transaction';
-
-        console.log(`🚀 Initiating ${RAPID_ENV} payment: Sending to ${endpoint}`);
 
         let checkoutUrl = null;
         try {
-            const response = await axios.post(`${BASE_URL}${endpoint}`,
-                params.toString(),
-                {
-                    headers: {
-                        'Authorization': `Bearer ${token}`,
-                        'Content-Type': 'application/x-www-form-urlencoded'
-                    },
-                    maxRedirects: 0,
-                    validateStatus: (status) => status >= 200 && status < 400
-                }
-            );
+            const response = await axios.post(`${BASE_URL}${endpoint}`, params.toString(), {
+                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+                maxRedirects: 0,
+                validateStatus: (status) => status >= 200 && status < 400
+            });
             checkoutUrl = response.headers.location || response.headers['Location'];
-        } catch (axiosError) {
-            // Capture redirect from error response if axios throws
-            checkoutUrl = axiosError.response?.headers?.location || axiosError.response?.headers?.['Location'];
-            if (!checkoutUrl) throw axiosError;
+        } catch (err) {
+            checkoutUrl = err.response?.headers?.location || err.response?.headers?.['Location'];
         }
 
-        if (!checkoutUrl) throw new Error("No Redirect URL found in response");
-
-        console.log(`✅ Success! Redirect Captured: ${checkoutUrl}`);
-
-        // Ensure app gets this URL in the JSON body
-        return res.status(200).json({
-            success: true,
-            checkout_url: checkoutUrl,
-            message: "Redirect captured successfully"
-        });
+        if (!checkoutUrl) throw new Error("No Redirect URL captured");
+        res.json({ success: true, checkout_url: checkoutUrl });
 
     } catch (error) {
-        console.error('Initiation Error:', error.message);
         res.status(500).json({ success: false, message: error.message });
     }
 });
 
-// Authoritative outcome from Webhook or Success Redirect
+// Authoritative Redirect Success Page
 router.get('/success', async (req, res) => {
     const { status, amount, basket_id } = req.query;
 
-    // In Sandbox, we can trust the redirect for testing, but in Live we wait for Webhook
     if (status === 'success' || status === 'SUCCESS') {
-        const userId = basket_id?.split('-')[0]; // If we passed userId in basket_id
-        console.log(`💰 Success Redirect: Amount=${amount}, User=${userId}`);
+        // Extract UserID from SBX-UserID-Timestamp
+        const parts = basket_id?.split('-') || [];
+        const userId = parts[1]; // Get the middle part
+
+        if (userId) {
+            await updateBalance(userId, amount, basket_id);
+        }
     }
 
-    res.send("<div style='text-align:center;'><h1>✅ Payment Successful!</h1><p>Returning to app...</p></div>");
+    res.send("<div style='text-align:center;font-family:sans-serif;padding-top:50px;'><h1>✅ Payment Successful!</h1><p>Your wallet has been updated. You can close this window.</p></div>");
+});
+
+// Webhook Callback
+router.post('/callback', async (req, res) => {
+    const { status, amount, merchantTransactionId } = req.body;
+
+    if (status === 'SUCCESS' || status === 'completed') {
+        const parts = merchantTransactionId?.split('-') || [];
+        const userId = parts[1];
+        if (userId) await updateBalance(userId, amount, merchantTransactionId);
+    }
+    res.status(200).send("OK");
 });
 
 router.get('/failure', (req, res) => res.send("<h1>❌ Payment Failed</h1>"));
