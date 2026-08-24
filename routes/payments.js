@@ -65,10 +65,10 @@ router.post('/initiate', async (req, res) => {
         params.append('VERSION', 'MY_VER_1.0');
         params.append('PROCCODE', '0');
 
-        // FORCE SANDBOX ENDPOINT FOR TESTING
-        const endpoint = '/sandbox/process-transaction';
+        // CHOOSE ENDPOINT BASED ON ENVIRONMENT
+        const endpoint = (RAPID_ENV === 'LIVE') ? '/rapid/process-transaction' : '/sandbox/process-transaction';
 
-        console.log(`🚀 FORCING SANDBOX: Sending to ${endpoint}:`, params.toString());
+        console.log(`🚀 Initiating ${RAPID_ENV} payment: Sending to ${endpoint}`);
 
         let checkoutUrl = null;
         try {
