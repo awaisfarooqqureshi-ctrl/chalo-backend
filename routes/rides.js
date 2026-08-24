@@ -58,10 +58,10 @@ router.post('/update-status', async (req, res) => {
     }
 });
 
-// 3. Bid
+// 3. Bid: Update RTDB with full offer object
 router.post('/bid', async (req, res) => {
     try {
-        const { rideId, driverId, bidFare, driverName } = req.body;
+        const { rideId, offer } = req.body;
         const db = admin.database();
         const rideRef = db.ref(`active_rides/${rideId}`);
 
@@ -70,22 +70,20 @@ router.post('/bid', async (req, res) => {
 
         const ride = snapshot.val();
         const offers = ride.offers || [];
-        const newOffer = {
-            id: Date.now().toString(),
-            driverId,
-            driverName,
-            bidFare: parseFloat(bidFare),
-            status: 'PENDING',
-            timestamp: Date.now()
-        };
+
+        if (!offer || !offer.driverId) {
+            return res.status(400).send("Invalid offer data");
+        }
 
         await rideRef.update({
-            offers: [...offers, newOffer],
+            offers: [...offers, offer],
             status: 'BIDS_RECEIVED'
         });
 
+        console.log(`💰 Full Bid received for: ${rideId} from ${offer.driverName}`);
         res.json({ success: true });
     } catch (e) {
+        console.error("Bid Error:", e.message);
         res.status(500).send(e.message);
     }
 });
