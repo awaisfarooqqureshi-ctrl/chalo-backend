@@ -65,6 +65,26 @@ router.get('/search', async (req, res) => {
     try {
         const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${query}&key=${MAPS_API_KEY}&region=pk`;
         const response = await axios.get(url);
+
+        if (response.data.status !== "OK") {
+            console.warn(`⚠️ Google Search Error: ${response.data.status}. Falling back to Nominatim.`);
+            const nomUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${query}&countrycodes=pk&limit=10`;
+            const nomRes = await axios.get(nomUrl, { headers: { 'User-Agent': 'ChaloDrive-App' } });
+
+            return res.json({
+                status: "OK",
+                results: nomRes.data.map(item => ({
+                    formatted_address: item.display_name,
+                    geometry: {
+                        location: {
+                            lat: parseFloat(item.lat),
+                            lng: parseFloat(item.lon)
+                        }
+                    }
+                }))
+            });
+        }
+
         res.json(response.data);
     } catch (e) {
         console.error("❌ Search Proxy Error:", e.message);
