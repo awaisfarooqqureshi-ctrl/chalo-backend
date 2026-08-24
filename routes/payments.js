@@ -74,7 +74,7 @@ router.post('/initiate', async (req, res) => {
 
         // 2. Prepare Transaction Data (Strict alignment with docs)
         // RapidGateway requires a NUMERIC Merchant ID for the transaction itself.
-        const numericMerchantId = (MERCHANT_ID === 'client') ? '123' : MERCHANT_ID;
+        const numericMerchantId = (MERCHANT_ID === 'client') ? '920' : MERCHANT_ID;
 
         let normalizedPhone = customer.phone.trim().replace(/\s+/g, '');
         if (normalizedPhone.startsWith('+92')) normalizedPhone = '0' + normalizedPhone.slice(3);
