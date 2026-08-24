@@ -4,9 +4,9 @@ const axios = require('axios');
 const crypto = require('crypto');
 const User = require('../models/User');
 
-const MERCHANT_ID = process.env.RAPID_MERCHANT_ID;
-const CLIENT_SECRET = process.env.RAPID_CLIENT_SECRET;
-const WEBHOOK_SALT = process.env.RAPID_WEBHOOK_SALT;
+const MERCHANT_ID = process.env.RAPID_MERCHANT_ID || process.env.MERCHANT_ID;
+const CLIENT_SECRET = process.env.RAPID_CLIENT_SECRET || process.env.CLIENT_SECRET;
+const WEBHOOK_SALT = process.env.RAPID_WEBHOOK_SALT || process.env.WEBHOOK_SALT;
 const BASE_URL = process.env.RAPID_API_BASE_URL || "https://secure.rapid-gateway.com";
 
 const SUCCESS_URL = process.env.RAPID_SUCCESS_URL;
