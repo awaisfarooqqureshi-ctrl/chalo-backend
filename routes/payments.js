@@ -56,7 +56,18 @@ function isValidWebhookSignature(req) {
 
 router.post('/initiate', async (req, res) => {
     try {
-        const { amount, customer, basketId } = req.body.paymentIntent || req.body;
+        const paymentData = req.body.paymentIntent || req.body;
+        const { amount, customer, basketId } = paymentData;
+
+        if (!amount || !customer?.phone) {
+            console.error("Missing payment data:", { amount, customer });
+            return res.status(400).json({ success: false, message: 'Amount and Customer Phone are required.' });
+        }
+
+        if (!MERCHANT_ID || !CLIENT_SECRET) {
+            console.error("RapidGateway credentials missing in environment variables.");
+            return res.status(503).json({ success: false, message: 'Payment service not configured on server.' });
+        }
 
         // 1. Get Token
         const token = await getAccessToken();
@@ -94,8 +105,16 @@ router.post('/initiate', async (req, res) => {
 
         res.json({ success: true, checkout_url: checkoutUrl });
     } catch (error) {
-        console.error('RapidGateway Initiation Error:', error.message);
-        res.status(500).json({ success: false, message: 'Payment initialization failed' });
+        const errorData = error.response?.data;
+        console.error('RapidGateway Initiation Error:', {
+            message: error.message,
+            data: errorData,
+            status: error.response?.status
+        });
+        res.status(500).json({
+            success: false,
+            message: errorData?.message || error.message || 'Payment initialization failed'
+        });
     }
 });
 
