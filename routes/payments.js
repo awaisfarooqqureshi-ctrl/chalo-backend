@@ -65,7 +65,7 @@ router.post('/initiate', async (req, res) => {
         params.append('VERSION', 'MY_VER_1.0');
         params.append('PROCCODE', '0');
 
-        console.log(`🚀 Initiating ${RAPID_ENV} for user ${customer.userId}:`, params.toString());
+        console.log(`🚀 Sending to RapidGateway (${RAPID_ENV}):`, params.toString());
 
         const response = await axios.post(`${BASE_URL}/rapid/process-transaction`,
             params.toString(),
@@ -75,14 +75,20 @@ router.post('/initiate', async (req, res) => {
                     'Content-Type': 'application/x-www-form-urlencoded'
                 },
                 maxRedirects: 0,
-                validateStatus: (status) => status === 302 || (status >= 200 && status < 300)
+                validateStatus: (status) => status === 302 || (status >= 200 && status < 400)
             }
         );
 
-        const checkoutUrl = response.headers.location;
-        if (!checkoutUrl) throw new Error("No Redirect URL in Location Header");
+        // Robustly get the redirect URL from headers
+        const checkoutUrl = response.headers.location || response.headers['Location'];
 
-        res.json({ success: true, checkout_url: checkoutUrl });
+        if (!checkoutUrl) {
+            console.error("No Redirect URL in response headers. Available Headers:", response.headers);
+            throw new Error("No redirect URL received from Gateway");
+        }
+
+        console.log(`✅ Redirect URL captured: ${checkoutUrl}`);
+        return res.json({ success: true, checkout_url: checkoutUrl });
 
     } catch (error) {
         console.error('Initiation Error:', error.message);
