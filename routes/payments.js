@@ -67,27 +67,29 @@ router.post('/initiate', async (req, res) => {
 
         console.log(`🚀 Sending to RapidGateway (${RAPID_ENV}):`, params.toString());
 
-        const response = await axios.post(`${BASE_URL}/rapid/process-transaction`,
-            params.toString(),
-            {
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/x-www-form-urlencoded'
-                },
-                maxRedirects: 0,
-                validateStatus: (status) => status === 302 || (status >= 200 && status < 400)
-            }
-        );
-
-        // Robustly get the redirect URL from headers
-        const checkoutUrl = response.headers.location || response.headers['Location'];
-
-        if (!checkoutUrl) {
-            console.error("No Redirect URL in response headers. Available Headers:", response.headers);
-            throw new Error("No redirect URL received from Gateway");
+        let checkoutUrl = null;
+        try {
+            const response = await axios.post(`${BASE_URL}/rapid/process-transaction`,
+                params.toString(),
+                {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/x-www-form-urlencoded'
+                    },
+                    maxRedirects: 0,
+                    validateStatus: (status) => status >= 200 && status < 400
+                }
+            );
+            checkoutUrl = response.headers.location || response.headers['Location'];
+        } catch (axiosError) {
+            // Capture redirect from error response if axios throws
+            checkoutUrl = axiosError.response?.headers?.location || axiosError.response?.headers?.['Location'];
+            if (!checkoutUrl) throw axiosError;
         }
 
-        console.log(`✅ Redirect URL captured: ${checkoutUrl}`);
+        if (!checkoutUrl) throw new Error("No Redirect URL found in response");
+
+        console.log(`✅ Redirect Captured: ${checkoutUrl}`);
         return res.json({ success: true, checkout_url: checkoutUrl });
 
     } catch (error) {
