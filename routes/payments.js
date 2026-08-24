@@ -159,4 +159,17 @@ router.post('/callback', async (req, res) => {
     res.status(200).send("OK");
 });
 
+// Helper pages for WebView redirects
+router.get('/success', (req, res) => {
+    res.send("<html><body style='text-align:center;padding-top:50px;'><h1>✅ Payment Successful!</h1><p>You can now close this window.</p></body></html>");
+});
+
+router.get('/failure', (req, res) => {
+    res.send("<html><body style='text-align:center;padding-top:50px;'><h1>❌ Payment Failed</h1><p>Please try again from the app.</p></body></html>");
+});
+
+router.get('/complete', (req, res) => {
+    res.send("<html><body style='text-align:center;padding-top:50px;'><h1>Processing...</h1><p>Returning you to the app.</p></body></html>");
+});
+
 module.exports = router;
