@@ -33,11 +33,21 @@ router.get('/reverse', async (req, res) => {
         const response = await axios.get(url);
 
         if (response.data.status !== "OK") {
-            console.error(`❌ Google API Error: ${response.data.status}`, response.data.error_message || "");
-        } else {
-            console.log(`✅ Found Address: ${response.data.results[0]?.formatted_address}`);
+            console.warn(`⚠️ Google API Error: ${response.data.status}. Falling back to Nominatim.`);
+            // Fallback to Nominatim
+            const nominatimUrl = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}`;
+            const nomRes = await axios.get(nominatimUrl, { headers: { 'User-Agent': 'ChaloDrive-App' } });
+
+            // Map Nominatim to Google-like format for App compatibility
+            return res.json({
+                status: "OK",
+                results: [{
+                    formatted_address: nomRes.data.display_name
+                }]
+            });
         }
 
+        console.log(`✅ Found Address: ${response.data.results[0]?.formatted_address}`);
         res.json(response.data);
     } catch (e) {
         console.error("❌ Geocode Proxy Error:", e.message);
