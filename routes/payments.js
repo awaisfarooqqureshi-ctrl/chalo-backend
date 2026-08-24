@@ -65,11 +65,12 @@ router.post('/initiate', async (req, res) => {
         }
 
         if (!MERCHANT_ID || !CLIENT_SECRET) {
-            const availableKeys = Object.keys(process.env).filter(k => k.includes('RAPID') || k.includes('MERCHANT') || k.includes('SECRET'));
-            console.error("RapidGateway credentials missing. Available related keys:", availableKeys);
+            const allKeys = Object.keys(process.env);
+            console.error("CRITICAL: RapidGateway credentials missing in process.env!");
+            console.error("All available environment keys (names only):", allKeys);
             return res.status(503).json({
                 success: false,
-                message: `Payment service not configured. Missing: ${!MERCHANT_ID ? 'MERCHANT_ID' : ''} ${!CLIENT_SECRET ? 'CLIENT_SECRET' : ''}`
+                message: "Server configuration missing. Please check Railway Environment Variables."
             });
         }
 
