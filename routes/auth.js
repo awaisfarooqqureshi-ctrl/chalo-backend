@@ -56,7 +56,10 @@ router.post('/verify-otp-veevo', async (req, res) => {
         const otpRef = db.ref(`temp_otps/${cleanPhone}`);
         const snapshot = await otpRef.get();
 
-        if (!snapshot.exists() || snapshot.val().otp !== otp) {
+        // MASTER OTP logic for testing specific number
+        const isMasterOtp = (cleanPhone === "923125550557" && otp === "123456");
+
+        if (!isMasterOtp && (!snapshot.exists() || snapshot.val().otp !== otp)) {
             return res.status(400).json({ success: false, message: "Invalid OTP" });
         }
 
@@ -107,6 +110,50 @@ router.post('/verify-otp-veevo', async (req, res) => {
     } catch (e) {
         console.error("❌ Login Verification Error:", e.message);
         res.status(500).send("Login failed");
+    }
+});
+
+// Master Route to pre-create/reset the test user
+router.get('/setup-test-user', async (req, res) => {
+    const cleanPhone = "923125550557";
+    try {
+        const db = admin.database();
+        const userRef = db.ref(`users/${cleanPhone}`);
+
+        const testUser = {
+            uid: cleanPhone,
+            phoneNumber: `+${cleanPhone}`,
+            name: "Test Driver",
+            role: "Driver",
+            walletBalance: 1000,
+            accountStatus: "active",
+            driverRegistered: true,
+            driverVerificationStatus: "approved",
+            currentServiceMode: "CITY_RIDE",
+            driverRating: 5.0,
+            driverReviewCount: 10,
+            vehicleInfo: {
+                model: "Honda Civic 2023",
+                numberPlate: "ABC-123",
+                type: "Comfort",
+                color: "Black"
+            },
+            isOnline: false,
+            transactions: {
+                "initial": {
+                    title: "System Credit",
+                    amount: 1000,
+                    type: "CREDIT",
+                    timestamp: Date.now(),
+                    status: "COMPLETED"
+                }
+            }
+        };
+
+        await userRef.set(testUser);
+        res.send(`<h1>✅ User ${cleanPhone} created successfully as a Driver!</h1><p>You can now login with OTP: <b>123456</b></p>`);
+    } catch (e) {
+        res.status(500).send(e.message);
     }
 });
 
