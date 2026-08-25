@@ -38,13 +38,50 @@ router.post('/update-status', async (req, res) => {
 
         await rideRef.update({ status });
 
-        if (['COMPLETED', 'CANCELLED', 'RIDE_COMPLETED', 'RIDE_CANCELLED'].includes(status)) {
+        if (['COMPLETED', 'RIDE_COMPLETED'].includes(status)) {
             const snapshot = await rideRef.get();
             if (snapshot.exists()) {
                 const finalRideData = snapshot.val();
+                const driverId = finalRideData.driverId;
+                const fare = finalRideData.offeredFare || 0;
+
+                if (driverId) {
+                    const driverRef = db.ref(`users/${driverId}`);
+                    const driverSnap = await driverRef.get();
+                    if (driverSnap.exists()) {
+                        const driver = driverSnap.val();
+                        const now = new Date();
+                        const currentMonth = now.getMonth(); // 0-11
+
+                        let monthlyEarnings = driver.monthlyEarnings || 0;
+                        let lifetimeEarnings = driver.lifetimeEarnings || 0;
+
+                        // Auto-reset monthly earnings if month changed
+                        if (driver.lastEarningsResetMonth !== currentMonth) {
+                            monthlyEarnings = fare;
+                        } else {
+                            monthlyEarnings += fare;
+                        }
+
+                        await driverRef.update({
+                            monthlyEarnings: monthlyEarnings,
+                            lifetimeEarnings: lifetimeEarnings + fare,
+                            lastEarningsResetMonth: currentMonth
+                        });
+                        console.log(`💰 Earnings Updated for Driver ${driverId}: +Rs.${fare}`);
+                    }
+                }
+
                 // Save to Global History Node
                 await db.ref(`history/${rideId}`).set(finalRideData);
                 // Remove from Active
+                await rideRef.remove();
+            }
+        } else if (['CANCELLED', 'RIDE_CANCELLED'].includes(status)) {
+            const snapshot = await rideRef.get();
+            if (snapshot.exists()) {
+                const finalRideData = snapshot.val();
+                await db.ref(`history/${rideId}`).set(finalRideData);
                 await rideRef.remove();
             }
         }
