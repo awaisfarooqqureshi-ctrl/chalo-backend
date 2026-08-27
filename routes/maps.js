@@ -5,17 +5,42 @@ const axios = require('axios');
 // Trim keys to prevent hidden space issues
 const MAPS_API_KEY = (process.env.GOOGLE_MAPS_API_KEY || '').trim();
 
-// 1. Get Directions (Proxy)
+// 1. Get Directions (Proxy with Fallback)
 router.get('/directions', async (req, res) => {
     const { origin, destination, waypoints } = req.query;
-    console.log(`🛣️ Route: ${origin} to ${destination}`);
+    console.log(`🛣️ Route Request: ${origin} to ${destination}`);
 
     if (!MAPS_API_KEY) return res.status(503).send("Maps key missing on server");
 
     try {
+        // Try Google First
         const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${origin}&destination=${destination}&waypoints=${waypoints || ''}&key=${MAPS_API_KEY}`;
-        const response = await axios.get(url, { timeout: 10000 });
-        res.json(response.data);
+        const response = await axios.get(url, { timeout: 8000 });
+
+        if (response.data.status === "OK") {
+            console.log("✅ Google Directions Success");
+            return res.json(response.data);
+        }
+
+        console.warn(`⚠️ Google Directions Failed (${response.data.status}). Error: ${response.data.error_message || 'N/A'}`);
+        console.log("🔄 Falling back to OSRM (Free Road Path)...");
+
+        // Fallback to OSRM (Free road-based routing)
+        const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${origin.split(',').reverse().join(',')};${destination.split(',').reverse().join(',')}?overview=full&geometries=polyline`;
+        const osrmRes = await axios.get(osrmUrl, { timeout: 5000 });
+
+        if (osrmRes.data.code === "Ok") {
+            console.log("✅ OSRM Fallback Success");
+            return res.json({
+                status: "OK",
+                routes: [{
+                    overview_polyline: { points: osrmRes.data.routes[0].geometry },
+                    legs: []
+                }]
+            });
+        }
+
+        res.json({ status: "ZERO_RESULTS", routes: [] });
     } catch (e) {
         console.error("❌ Directions Proxy Error:", e.message);
         res.status(500).send(e.message);
