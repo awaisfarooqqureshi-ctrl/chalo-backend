@@ -14,6 +14,15 @@ const SMS_CONFIG = {
 
 const CHALO_SECRET = process.env.CHALO_SECRET || 'fallback_secret';
 
+router.get('/check-env', (req, res) => {
+    res.json({
+        fastSmsId: process.env.FASTSMS_ID ? "Loaded" : "Missing",
+        fastSmsPass: process.env.FASTSMS_PASS ? "Loaded" : "Missing",
+        fastSmsMask: process.env.FASTSMS_MASK ? "Loaded" : "Missing",
+        chaloSecret: process.env.CHALO_SECRET ? "Loaded" : "Missing"
+    });
+});
+
 // 1. Send OTP (Saving to RTDB instead of MongoDB)
 router.post('/send-otp-veevo', async (req, res) => {
     let { phone } = req.body;
@@ -26,7 +35,13 @@ router.post('/send-otp-veevo', async (req, res) => {
     try {
         const fastSmsUrl = `${SMS_CONFIG.baseUrl}?id=${SMS_CONFIG.id}&pass=${SMS_CONFIG.pass}&mask=${encodeURIComponent(SMS_CONFIG.mask)}&to=${cleanPhone}&msg=${encodeURIComponent(message)}&type=json&lang=english`;
 
+        console.log(`📡 Sending SMS to ${cleanPhone}...`);
+        // Log config state (safety check, don't log passwords in production but here it's for debug)
+        console.log(`⚙️ SMS Config Check: ID=${SMS_CONFIG.id ? 'OK' : 'MISSING'}, PASS=${SMS_CONFIG.pass ? 'OK' : 'MISSING'}, MASK=${SMS_CONFIG.mask}`);
+
         const response = await axios.get(fastSmsUrl);
+        console.log(`📥 SMS Gateway Response:`, response.data);
+
         const isSuccess = response.data && (response.data.status === "success" || response.data.message_id || (typeof response.data === 'string' && response.data.includes("Successfully")));
 
         if (isSuccess || response.status === 200) {
