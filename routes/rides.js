@@ -69,6 +69,56 @@ router.post('/update-status', async (req, res) => {
                             lastEarningsResetMonth: currentMonth
                         });
                         console.log(`💰 Earnings Updated for Driver ${driverId}: +Rs.${fare}`);
+
+                        // --- UPDATE BONUS PROGRESS ---
+                        const vehicleType = finalRideData.vehicleType || "Car";
+                        const vehicleGroup = ["bike", "rickshaw", "riksha"].includes(vehicleType.toLowerCase()) ? "BIKE_RIKSHAW" : "CAR";
+
+                        const schemesSnap = await db.ref('bonus_schemes').get();
+                        if (schemesSnap.exists()) {
+                            const schemes = schemesSnap.val();
+                            for (const sId in schemes) {
+                                const scheme = schemes[sId];
+                                if (scheme.isActive && (scheme.vehicleGroup === "ALL" || scheme.vehicleGroup === vehicleGroup)) {
+                                    const progressRef = db.ref(`driver_bonus_progress/${driverId}/${sId}`);
+                                    const progSnap = await progressRef.get();
+                                    let currentProgress = 0;
+                                    if (progSnap.exists()) {
+                                        currentProgress = progSnap.val().currentProgress || 0;
+                                    }
+
+                                    let newProgress = currentProgress + 1;
+
+                                    // Check if completed
+                                    if (newProgress >= scheme.target) {
+                                        console.log(`🎊 Bonus Completed: ${scheme.title} for Driver ${driverId}`);
+                                        // 1. Give Reward
+                                        const currentBalance = (driver.walletBalance || 0) + scheme.reward;
+                                        await driverRef.update({ walletBalance: currentBalance });
+
+                                        // 2. Add Transaction
+                                        const tid = driverRef.child('transactions').push().key;
+                                        await driverRef.child(`transactions/${tid}`).set({
+                                            id: tid,
+                                            title: `Bonus: ${scheme.title}`,
+                                            amount: scheme.reward,
+                                            type: "CREDIT",
+                                            status: "COMPLETED",
+                                            timestamp: Date.now()
+                                        });
+
+                                        // 3. Reset Progress (as requested: "aik dafa bouns complete hony k bad phir sy start ho jana chaye")
+                                        newProgress = 0;
+                                    }
+
+                                    await progressRef.set({
+                                        schemeId: sId,
+                                        currentProgress: newProgress,
+                                        lastUpdated: Date.now()
+                                    });
+                                }
+                            }
+                        }
                     }
                 }
 
