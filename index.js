@@ -48,6 +48,7 @@ app.use('/carpool', require('./routes/carpool'));
 app.use('/payments', require('./routes/payments'));
 app.use('/maps', require('./routes/maps'));
 app.use('/emergency', require('./routes/emergency'));
+app.use('/admin', require('./routes/admin'));
 
 // Sockets Logic (Pure Firebase/Logic, no Mongo)
 io.on('connection', (socket) => {
