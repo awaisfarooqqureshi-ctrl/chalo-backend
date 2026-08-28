@@ -61,7 +61,7 @@ router.delete('/bonuses/:id', async (req, res) => {
     }
 });
 
-// 4. Seed Default Bonuses (Helper for the user)
+// 4. Seed Default Bonuses (Populates both CAR and BIKE_RIKSHAW)
 router.post('/bonuses/seed', async (req, res) => {
     try {
         const db = admin.database();
@@ -69,7 +69,7 @@ router.post('/bonuses/seed', async (req, res) => {
             "daily_hero_bike": {
                 id: "daily_hero_bike",
                 title: "Daily Bike Hero",
-                description: "Complete 10 rides in a day",
+                description: "Complete 10 rides today",
                 type: "RIDE_COMPLETION",
                 target: 10,
                 reward: 200,
@@ -87,11 +87,22 @@ router.post('/bonuses/seed', async (req, res) => {
                 vehicleGroup: "CAR",
                 isActive: true,
                 colorHex: "#FFD700"
+            },
+            "beginner_bonus_all": {
+                id: "beginner_bonus_all",
+                title: "Starter Bonus",
+                description: "Complete your first 3 rides",
+                type: "RIDE_COMPLETION",
+                target: 3,
+                reward: 100,
+                vehicleGroup: "ALL",
+                isActive: true,
+                colorHex: "#2196F3"
             }
         };
 
         await db.ref('bonus_schemes').update(defaults);
-        res.json({ success: true, message: "Default bonuses seeded to database" });
+        res.json({ success: true, message: "Comprehensive bonuses seeded for both groups", data: defaults });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
