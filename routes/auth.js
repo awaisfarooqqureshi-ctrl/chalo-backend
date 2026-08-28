@@ -4,15 +4,15 @@ const axios = require('axios');
 const jwt = require('jsonwebtoken');
 const admin = require('firebase-admin');
 
-// --- FASTSMSALERTS.COM CONFIGURATION ---
+// --- FASTSMSALERTS.COM CONFIGURATION (Secrets from .env) ---
 const SMS_CONFIG = {
-    id: process.env.FASTSMS_ID || "rchnp",
-    pass: process.env.FASTSMS_PASS || "rchnp1281",
-    mask: process.env.FASTSMS_MASK || "SMS Test.",
+    id: process.env.FASTSMS_ID,
+    pass: process.env.FASTSMS_PASS,
+    mask: process.env.FASTSMS_MASK,
     baseUrl: "https://fastsmsalerts.com/api/composesmsbulkotp"
 };
 
-const CHALO_SECRET = 'CHALO_APP_SECRET_KEY_2024';
+const CHALO_SECRET = process.env.CHALO_SECRET || 'fallback_secret';
 
 // 1. Send OTP (Saving to RTDB instead of MongoDB)
 router.post('/send-otp-veevo', async (req, res) => {
