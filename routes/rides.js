@@ -83,8 +83,11 @@ router.post('/update-status', async (req, res) => {
                                     const progressRef = db.ref(`driver_bonus_progress/${driverId}/${sId}`);
                                     const progSnap = await progressRef.get();
                                     let currentProgress = 0;
+                                    let completionCount = 0;
                                     if (progSnap.exists()) {
-                                        currentProgress = progSnap.val().currentProgress || 0;
+                                        const pVal = progSnap.val();
+                                        currentProgress = pVal.currentProgress || 0;
+                                        completionCount = pVal.completionCount || 0;
                                     }
 
                                     let newProgress = currentProgress + 1;
@@ -92,6 +95,8 @@ router.post('/update-status', async (req, res) => {
                                     // Check if completed
                                     if (newProgress >= scheme.target) {
                                         console.log(`🎊 Bonus Completed: ${scheme.title} for Driver ${driverId}`);
+                                        completionCount += 1;
+
                                         // 1. Give Reward
                                         const currentBalance = (driver.walletBalance || 0) + scheme.reward;
                                         await driverRef.update({ walletBalance: currentBalance });
@@ -100,7 +105,7 @@ router.post('/update-status', async (req, res) => {
                                         const tid = driverRef.child('transactions').push().key;
                                         await driverRef.child(`transactions/${tid}`).set({
                                             id: tid,
-                                            title: `Bonus: ${scheme.title}`,
+                                            title: `Bonus: ${scheme.title} (x${completionCount})`,
                                             amount: scheme.reward,
                                             type: "CREDIT",
                                             status: "COMPLETED",
@@ -109,11 +114,23 @@ router.post('/update-status', async (req, res) => {
 
                                         // 3. Reset Progress (as requested: "aik dafa bouns complete hony k bad phir sy start ho jana chaye")
                                         newProgress = 0;
+
+                                        // 4. Permanent History Log
+                                        const historyId = db.ref(`bonus_history/${driverId}`).push().key;
+                                        await db.ref(`bonus_history/${driverId}/${historyId}`).set({
+                                            id: historyId,
+                                            schemeId: sId,
+                                            title: scheme.title,
+                                            reward: scheme.reward,
+                                            timestamp: Date.now(),
+                                            cycle: completionCount
+                                        });
                                     }
 
                                     await progressRef.set({
                                         schemeId: sId,
                                         currentProgress: newProgress,
+                                        completionCount: completionCount,
                                         lastUpdated: Date.now()
                                     });
                                 }
