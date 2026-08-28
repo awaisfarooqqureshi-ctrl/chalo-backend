@@ -61,8 +61,8 @@ router.delete('/bonuses/:id', async (req, res) => {
     }
 });
 
-// 4. Seed Default Bonuses (Populates both CAR and BIKE_RIKSHAW)
-router.post('/bonuses/seed', async (req, res) => {
+// 4. Seed Default Bonuses (GET added for easy browser access)
+router.get('/bonuses/seed', async (req, res) => {
     try {
         const db = admin.database();
         const defaults = {
@@ -102,7 +102,53 @@ router.post('/bonuses/seed', async (req, res) => {
         };
 
         await db.ref('bonus_schemes').update(defaults);
-        res.json({ success: true, message: "Comprehensive bonuses seeded for both groups", data: defaults });
+        res.send(`<h1>✅ Success!</h1><p>Comprehensive bonuses seeded for both groups.</p><pre>${JSON.stringify(defaults, null, 2)}</pre>`);
+    } catch (error) {
+        res.status(500).send(`<h1>❌ Error</h1><p>${error.message}</p>`);
+    }
+});
+
+// Also keep POST for API usage
+router.post('/bonuses/seed', async (req, res) => {
+    try {
+        const db = admin.database();
+        const defaults = {
+            "daily_hero_bike": {
+                id: "daily_hero_bike",
+                title: "Daily Bike Hero",
+                description: "Complete 10 rides today",
+                type: "RIDE_COMPLETION",
+                target: 10,
+                reward: 200,
+                vehicleGroup: "BIKE_RIKSHAW",
+                isActive: true,
+                colorHex: "#4CAF50"
+            },
+            "mega_goal_car": {
+                id: "mega_goal_car",
+                title: "Mega Car Goal",
+                description: "Complete 15 rides for a big reward",
+                type: "RIDE_COMPLETION",
+                target: 15,
+                reward: 1000,
+                vehicleGroup: "CAR",
+                isActive: true,
+                colorHex: "#FFD700"
+            },
+            "beginner_bonus_all": {
+                id: "beginner_bonus_all",
+                title: "Starter Bonus",
+                description: "Complete your first 3 rides",
+                type: "RIDE_COMPLETION",
+                target: 3,
+                reward: 100,
+                vehicleGroup: "ALL",
+                isActive: true,
+                colorHex: "#2196F3"
+            }
+        };
+        await db.ref('bonus_schemes').update(defaults);
+        res.json({ success: true, message: "Comprehensive bonuses seeded", data: defaults });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
