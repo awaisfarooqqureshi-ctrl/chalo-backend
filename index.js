@@ -41,14 +41,23 @@ try {
 }
 
 // Modular Routes
+const { verifyAppKey, verifyToken, verifyAdmin } = require('./middleware/auth');
+
+// Apply Global App Key Protection (Requires every request to have the secret header)
+app.use(verifyAppKey);
+
 app.use('/auth', require('./routes/auth'));
-app.use('/users', require('./routes/users'));
-app.use('/rides', require('./routes/rides'));
-app.use('/carpool', require('./routes/carpool'));
-app.use('/payments', require('./routes/payments'));
-app.use('/maps', require('./routes/maps'));
-app.use('/emergency', require('./routes/emergency'));
-app.use('/admin', require('./routes/admin'));
+
+// PROTECTED ROUTES (Require Login)
+app.use('/users', verifyToken, require('./routes/users'));
+app.use('/rides', verifyToken, require('./routes/rides'));
+app.use('/carpool', verifyToken, require('./routes/carpool'));
+app.use('/payments', verifyToken, require('./routes/payments'));
+app.use('/emergency', verifyToken, require('./routes/emergency'));
+app.use('/maps', verifyToken, require('./routes/maps'));
+
+// ADMIN ONLY ROUTES
+app.use('/admin', verifyToken, verifyAdmin, require('./routes/admin'));
 
 // Sockets Logic (Pure Firebase/Logic, no Mongo)
 io.on('connection', (socket) => {
