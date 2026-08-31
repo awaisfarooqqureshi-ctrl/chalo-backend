@@ -225,21 +225,22 @@ router.get('/test-seed', async (req, res) => {
     }
 });
 
-// 6. Clean Dummy Data (Optimized)
+// 6. Clean ALL Active Rides (To fix data format issues)
 router.get('/test-clean', async (req, res) => {
     try {
         const db = admin.database();
-        const updates = {};
 
-        // Directly target the specific dummy IDs instead of fetching all users
+        // 1. Wipe ALL active rides to clear format conflicts (List vs Map)
+        await db.ref('active_rides').remove();
+
+        // 2. Remove specific dummy drivers
+        const updates = {};
         for (let i = 1; i <= 20; i++) {
             updates[`users/dummy_driver_${i}`] = null;
-            updates[`active_rides/dummy_ride_${i}`] = null;
         }
-
         await db.ref().update(updates);
 
-        res.send(`<h1>🧹 Cleanup Complete!</h1><p>20 Dummy Drivers and 20 Dummy Rides removed instantly.</p><p><a href="/admin/test-seed">Seed Again</a></p>`);
+        res.send(`<h1>🧹 Deep Cleanup Complete!</h1><p>Active rides folder wiped and dummy drivers removed. App should no longer crash.</p><p><a href="/admin/test-seed">Seed Fresh Data</a></p>`);
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
