@@ -20,13 +20,13 @@ app.use(express.json({
 }));
 app.use(express.urlencoded({ extended: true }));
 
-// Global Request Logger for Debugging
+// Global Request Logger
 app.use((req, res, next) => {
-    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
     next();
 });
 
-// Firebase Admin Setup (PRIMARY DATABASE)
+// Firebase Admin Setup
 try {
     if (process.env.FIREBASE_SERVICE_ACCOUNT) {
         const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
@@ -34,7 +34,7 @@ try {
             credential: admin.credential.cert(serviceAccount),
             databaseURL: "https://indrive-d69e1-default-rtdb.firebaseio.com"
         });
-        console.log("✅ Firebase Admin Initialized - All data on RTDB");
+        console.log("✅ Firebase Admin Initialized");
     }
 } catch (error) {
     console.error("❌ Firebase Initialization Error:", error.message);
@@ -42,50 +42,45 @@ try {
 
 // Modular Routes & Middleware
 const { verifyAppKey, verifyToken, verifyAdmin } = require('./middleware/auth');
-const adminRoutes = require('./routes/admin');
 
-// 1. PUBLIC ROUTES (No Security Check)
+// 1. PUBLIC ROUTES
 app.use('/auth', require('./routes/auth'));
 
-// 2. SEMI-PUBLIC ADMIN ROUTES (Bypass JWT for Browser Access)
-app.get('/admin/test-seed', adminRoutes);
-app.get('/admin/test-clean', adminRoutes);
-app.get('/admin/bonuses/seed', adminRoutes);
-
-// 3. GLOBAL APP KEY PROTECTION (Applies to all routes below)
+// 2. SEMI-PUBLIC ADMIN ROUTES (Bypass Global App Key for Browser)
 app.use((req, res, next) => {
     if (req.method === 'OPTIONS') return next();
+    const url = req.originalUrl || req.url;
+    if (url.includes('/admin/test-') || url.includes('/admin/bonuses/seed')) {
+        return next();
+    }
     verifyAppKey(req, res, next);
 });
 
-// 4. PROTECTED ROUTES (Require JWT Token)
+// 3. PROTECTED ROUTES (Require Token)
 app.use('/users', verifyToken, require('./routes/users'));
 app.use('/rides', verifyToken, require('./routes/rides'));
 app.use('/carpool', verifyToken, require('./routes/carpool'));
 app.use('/payments', verifyToken, require('./routes/payments'));
 app.use('/emergency', verifyToken, require('./routes/emergency'));
-app.use('/maps', require('./routes/maps'));
+app.use('/maps', verifyToken, require('./routes/maps'));
 
-// 5. SECURE ADMIN API (Remaining admin endpoints)
-app.use('/admin', verifyToken, verifyAdmin, adminRoutes);
+// 4. ADMIN API
+app.use('/admin', verifyToken, verifyAdmin, require('./routes/admin'));
 
 // Sockets Logic
 io.on('connection', (socket) => {
-    console.log("New client connected:", socket.id);
     socket.on('update_location', async (data) => {
         if (data.userId) {
             const cleanId = data.userId.replace('+', '').trim();
             io.emit('location_updated', { ...data, userId: cleanId });
         }
     });
-    socket.on('disconnect', () => {
-        console.log("Client disconnected:", socket.id);
-    });
+    socket.on('disconnect', () => { });
 });
 
-app.get('/', (req, res) => res.json({ status: "Online", message: "Chalo Modular API v1.1" }));
+app.get('/', (req, res) => res.json({ status: "Online", message: "Chalo API Secured" }));
 
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, "0.0.0.0", () => {
-    console.log(`🚀 Chalo Server running on port ${PORT}`);
+    console.log(`🚀 Server running on port ${PORT}`);
 });
