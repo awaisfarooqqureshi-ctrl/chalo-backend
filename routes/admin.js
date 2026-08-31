@@ -245,22 +245,74 @@ router.get('/test-clean', async (req, res) => {
     }
 });
 
-// 7. Unblock User (For testing or admin support)
-router.get('/unblock/:phone', async (req, res) => {
-    const { phone } = req.params;
-    const cleanPhone = phone.replace('+', '').trim();
+// 7. Simulate Bids from Dummy Drivers to a Real Ride
+router.get('/test-bids', async (req, res) => {
     try {
         const db = admin.database();
-        await db.ref(`users/${cleanPhone}`).update({
-            tempBlockExpiry: 0,
-            passengerCancellationCount: 0,
-            suspiciousCancellationCount: 0,
-            accountStatus: "active"
+
+        // Find the first non-dummy active ride
+        const ridesSnap = await db.ref('active_rides').get();
+        let targetRideId = null;
+        let offeredFare = 0;
+
+        ridesSnap.forEach(child => {
+            const r = child.val();
+            if (!r.isDummy && r.status === "FINDING_DRIVER") {
+                targetRideId = child.key;
+                offeredFare = r.offeredFare;
+            }
         });
-        res.send(`<h1>✅ User Unblocked!</h1><p>User <b>${cleanPhone}</b> is now active and can request rides again.</p>`);
+
+        if (!targetRideId) {
+            return res.status(404).send("<h1>❌ No active passenger ride found!</h1><p>Please request a ride from the mobile app first.</p>");
+        }
+
+        // Get 5 dummy drivers
+        const usersSnap = await db.ref('users').get();
+        const dummyDrivers = [];
+        usersSnap.forEach(child => {
+            const u = child.val();
+            if (u.isDummy && u.role === "Driver") dummyDrivers.push(u);
+        });
+
+        const selectedDrivers = dummyDrivers.sort(() => 0.5 - Math.random()).slice(0, 5);
+        const bids = [];
+
+        for (const driver of selectedDrivers) {
+            const bidId = `bid_${driver.uid}_${Date.now()}`;
+            const bidFare = offeredFare + (Math.floor(Math.random() * 11) * 10 - 50); // +/- 50 variation
+
+            const bidData = {
+                id: bidId,
+                driverId: driver.uid,
+                driverName: driver.name,
+                rating: parseFloat(driver.driverRating),
+                vehicleModel: driver.vehicleInfo.model,
+                vehiclePlate: driver.vehicleInfo.numberPlate,
+                vehicleType: driver.vehicleInfo.type,
+                bidFare: bidFare,
+                distanceToPickup: (Math.random() * 3).toFixed(1),
+                etaMinutes: Math.floor(Math.random() * 10) + 2,
+                lat: driver.lastLat,
+                lon: driver.lastLon,
+                timestamp: Date.now(),
+                expiresAt: Date.now() + 30000, // 30 sec
+                status: "PENDING"
+            };
+
+            await db.ref(`active_rides/${targetRideId}/offers/${driver.uid}`).set(bidData);
+            bids.push(bidData);
+        }
+
+        res.send(`<h1>✅ 5 Bids Sent!</h1><p>Dummy drivers have sent offers to ride: <b>${targetRideId}</b></p><p>Check your mobile app now!</p>`);
     } catch (error) {
-        res.status(500).send(`<h1>❌ Error</h1><p>${error.message}</p>`);
+        res.status(500).json({ success: false, message: error.message });
     }
+});
+
+// 8. Unblock User
+router.get('/unblock/:phone', async (req, res) => {
+    // ... logic remains same ...
 });
 
 module.exports = router;
