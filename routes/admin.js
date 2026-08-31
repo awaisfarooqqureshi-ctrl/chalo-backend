@@ -154,4 +154,99 @@ router.post('/bonuses/seed', async (req, res) => {
     }
 });
 
+// 5. Seed Dummy Data for Testing (Islamabad Area)
+router.get('/test-seed', async (req, res) => {
+    try {
+        const db = admin.database();
+        const baseLat = 33.6844;
+        const baseLon = 73.0479;
+        const radius = 0.08; // Roughly 8-10km range
+
+        const vehicleTypes = ["Bike", "Mini", "Comfort", "Van"];
+        const dummyDrivers = {};
+        const dummyRides = {};
+
+        // Generate 20 Dummy Drivers
+        for (let i = 1; i <= 20; i++) {
+            const id = `dummy_driver_${i}`;
+            const vType = vehicleTypes[Math.floor(Math.random() * vehicleTypes.length)];
+            dummyDrivers[id] = {
+                uid: id,
+                name: `Test Driver ${i}`,
+                phoneNumber: `+92300${1000000 + i}`,
+                role: "Driver",
+                isOnline: true,
+                driverStatus: "AVAILABLE",
+                lastLat: baseLat + (Math.random() * radius * 2 - radius),
+                lastLon: baseLon + (Math.random() * radius * 2 - radius),
+                rotation: Math.random() * 360,
+                vehicleInfo: { type: vType, model: "Testing Car", numberPlate: `TEST-${i}` },
+                driverRating: (4 + Math.random()).toFixed(1),
+                isDummy: true // Flag for easy cleanup
+            };
+        }
+
+        // Generate 20 Dummy Ride Requests
+        for (let j = 1; j <= 20; j++) {
+            const rideId = `dummy_ride_${j}`;
+            const vType = vehicleTypes[Math.floor(Math.random() * vehicleTypes.length)];
+            const originalFare = 200 + Math.floor(Math.random() * 500);
+            const offeredFare = Math.random() > 0.5 ? originalFare + 50 : originalFare; // 50% are "RAISED"
+
+            dummyRides[rideId] = {
+                id: rideId,
+                passengerName: `Test Passenger ${j}`,
+                passengerId: `dummy_pass_${j}`,
+                serviceType: "CITY_RIDE",
+                vehicleType: vType,
+                pickupLocation: `Sector G-${Math.floor(Math.random() * 11) + 1}, Islamabad`,
+                destination: `Sector F-${Math.floor(Math.random() * 11) + 1}, Islamabad`,
+                pickupLat: baseLat + (Math.random() * radius - (radius/2)),
+                pickupLon: baseLon + (Math.random() * radius - (radius/2)),
+                destinationLat: baseLat + (Math.random() * radius - (radius/2)),
+                destinationLon: baseLon + (Math.random() * radius - (radius/2)),
+                originalFare: originalFare,
+                offeredFare: offeredFare,
+                status: "FINDING_DRIVER",
+                timestamp: Date.now() - (Math.random() * 600000), // Up to 10 mins old
+                isDummy: true
+            };
+        }
+
+        await db.ref('users').update(dummyDrivers);
+        await db.ref('active_rides').update(dummyRides);
+
+        res.send(`<h1>✅ Test Data Seeded!</h1><p>20 Drivers and 20 Rides created in Islamabad.</p><p><a href="/admin/test-clean">Click here to Clean Up</a></p>`);
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// 6. Clean Dummy Data
+router.get('/test-clean', async (req, res) => {
+    try {
+        const db = admin.database();
+
+        // Remove drivers with isDummy flag
+        const usersSnap = await db.ref('users').get();
+        const updates = {};
+        usersSnap.forEach(child => {
+            if (child.val().isDummy) updates[child.key] = null;
+        });
+        await db.ref('users').update(updates);
+
+        // Remove rides with isDummy flag
+        const ridesSnap = await db.ref('active_rides').get();
+        const rideUpdates = {};
+        ridesSnap.forEach(child => {
+            if (child.val().isDummy) rideUpdates[child.key] = null;
+        });
+        await db.ref('active_rides').update(rideUpdates);
+
+        res.send(`<h1>🧹 Cleanup Complete!</h1><p>All dummy test data has been removed from database.</p><p><a href="/admin/test-seed">Seed Again</a></p>`);
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
 module.exports = router;
