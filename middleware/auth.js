@@ -14,6 +14,11 @@ const verifyAppKey = (req, res, next) => {
 
 // 2. Verify User Token (JWT)
 const verifyToken = (req, res, next) => {
+    // Bypass for browser-based test/seed links
+    if (req.url.startsWith('/admin/test-') || req.url.startsWith('/admin/bonuses/seed')) {
+        return next();
+    }
+
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
         return res.status(401).json({ success: false, message: "Unauthorized: No token provided" });
@@ -31,6 +36,11 @@ const verifyToken = (req, res, next) => {
 
 // 3. Verify Admin Role
 const verifyAdmin = async (req, res, next) => {
+    // Bypass for browser-based test/seed links
+    if (req.url.startsWith('/admin/test-') || req.url.startsWith('/admin/bonuses/seed')) {
+        return next();
+    }
+
     const userId = req.user?.userId;
     if (!userId) return res.status(403).json({ success: false, message: "Access Forbidden" });
 
