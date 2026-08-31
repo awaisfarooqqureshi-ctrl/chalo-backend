@@ -314,7 +314,7 @@ router.get('/test-bids', async (req, res) => {
                 lat: dLat,
                 lon: dLon,
                 timestamp: Date.now(),
-                expiresAt: Date.now() + 300000, // 5 minutes for stable testing
+                expiresAt: Date.now() + 15000, // 15 seconds (account for latency, shows ~10s in app)
                 status: "PENDING"
             };
 
