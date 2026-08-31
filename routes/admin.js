@@ -180,9 +180,11 @@ router.get('/test-seed', async (req, res) => {
                 lastLat: baseLat + (Math.random() * radius * 2 - radius),
                 lastLon: baseLon + (Math.random() * radius * 2 - radius),
                 rotation: Math.random() * 360,
-                vehicleInfo: { type: vType, model: "Testing Car", numberPlate: `TEST-${i}` },
-                driverRating: (4 + Math.random()).toFixed(1),
-                isDummy: true // Flag for easy cleanup
+                vehicleInfo: { type: vType, model: "Testing Car", numberPlate: `TEST-${i}`, ownerName: "Test Owner" },
+                driverRating: parseFloat((4 + Math.random()).toFixed(1)),
+                driverReviewCount: Math.floor(Math.random() * 50),
+                driverCompletedRides: Math.floor(Math.random() * 100),
+                isDummy: true
             };
         }
 
@@ -191,7 +193,7 @@ router.get('/test-seed', async (req, res) => {
             const rideId = `dummy_ride_${j}`;
             const vType = vehicleTypes[Math.floor(Math.random() * vehicleTypes.length)];
             const originalFare = 200 + Math.floor(Math.random() * 500);
-            const offeredFare = Math.random() > 0.5 ? originalFare + 50 : originalFare; // 50% are "RAISED"
+            const offeredFare = Math.random() > 0.5 ? originalFare + 50 : originalFare;
 
             dummyRides[rideId] = {
                 id: rideId,
@@ -208,7 +210,8 @@ router.get('/test-seed', async (req, res) => {
                 originalFare: originalFare,
                 offeredFare: offeredFare,
                 status: "FINDING_DRIVER",
-                timestamp: Date.now() - (Math.random() * 600000), // Up to 10 mins old
+                timestamp: Math.floor(Date.now() - (Math.random() * 600000)),
+                lastPing: Date.now(),
                 isDummy: true
             };
         }
