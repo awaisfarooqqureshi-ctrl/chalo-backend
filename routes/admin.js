@@ -251,16 +251,22 @@ router.get('/test-bids', async (req, res) => {
     try {
         const db = admin.database();
 
-        // Find the first non-dummy active ride
+        // Find the first non-dummy active ride that's currently in bidding phase
         const ridesSnap = await db.ref('active_rides').get();
         let targetRideId = null;
         let offeredFare = 0;
+        let rideLat = 0;
+        let rideLon = 0;
 
         ridesSnap.forEach(child => {
             const r = child.val();
-            if (!r.isDummy && r.status === "FINDING_DRIVER") {
+            // Accept both FINDING_DRIVER and BIDS_RECEIVED statuses
+            const isInBidding = r.status === "FINDING_DRIVER" || r.status === "BIDS_RECEIVED" || r.status === "BIDS";
+            if (!r.isDummy && isInBidding) {
                 targetRideId = child.key;
-                offeredFare = r.offeredFare;
+                offeredFare = r.offeredFare || 0;
+                rideLat = r.pickupLat;
+                rideLon = r.pickupLon;
             }
         });
 
@@ -276,12 +282,21 @@ router.get('/test-bids', async (req, res) => {
             if (u.isDummy && u.role === "Driver") dummyDrivers.push(u);
         });
 
+        if (dummyDrivers.length === 0) {
+             return res.status(404).send("<h1>❌ No dummy drivers found in database!</h1><p>Please run <b>/admin/test-seed</b> first.</p>");
+        }
+
         const selectedDrivers = dummyDrivers.sort(() => 0.5 - Math.random()).slice(0, 5);
         const bids = [];
+        const radius = 0.02; // Roughly 2km around the passenger
 
         for (const driver of selectedDrivers) {
             const bidId = `bid_${driver.uid}_${Date.now()}`;
-            const bidFare = offeredFare + (Math.floor(Math.random() * 11) * 10 - 50); // +/- 50 variation
+            const bidFare = offeredFare + (Math.floor(Math.random() * 11) * 10 - 50);
+
+            // Move dummy driver near the actual passenger for testing
+            const dLat = rideLat + (Math.random() * radius - (radius/2));
+            const dLon = rideLon + (Math.random() * radius - (radius/2));
 
             const bidData = {
                 id: bidId,
@@ -292,14 +307,22 @@ router.get('/test-bids', async (req, res) => {
                 vehiclePlate: driver.vehicleInfo.numberPlate,
                 vehicleType: driver.vehicleInfo.type,
                 bidFare: bidFare,
-                distanceToPickup: parseFloat((Math.random() * 3).toFixed(1)),
-                etaMinutes: Math.floor(Math.random() * 10) + 2,
-                lat: driver.lastLat,
-                lon: driver.lastLon,
+                distanceToPickup: parseFloat((Math.random() * 2).toFixed(1)),
+                etaMinutes: Math.floor(Math.random() * 5) + 2,
+                lat: dLat,
+                lon: dLon,
                 timestamp: Date.now(),
-                expiresAt: Date.now() + 120000, // Increase to 2 minutes for testing safety
+                expiresAt: Date.now() + 300000, // 5 minutes for stable testing
                 status: "PENDING"
             };
+
+            // Update driver's location in DB so map shows them near the pickup
+            await db.ref(`users/${driver.uid}`).update({
+                lastLat: dLat,
+                lastLon: dLon,
+                isOnline: true,
+                driverStatus: "AVAILABLE"
+            });
 
             await db.ref(`active_rides/${targetRideId}/offers/${driver.uid}`).set(bidData);
             bids.push(bidData);
