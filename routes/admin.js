@@ -225,9 +225,24 @@ router.get('/test-seed', async (req, res) => {
     }
 });
 
-// 6. Clean Dummy Data
+// 6. Clean Dummy Data (Optimized)
 router.get('/test-clean', async (req, res) => {
-    // ... logic remains same ...
+    try {
+        const db = admin.database();
+        const updates = {};
+
+        // Directly target the specific dummy IDs instead of fetching all users
+        for (let i = 1; i <= 20; i++) {
+            updates[`users/dummy_driver_${i}`] = null;
+            updates[`active_rides/dummy_ride_${i}`] = null;
+        }
+
+        await db.ref().update(updates);
+
+        res.send(`<h1>🧹 Cleanup Complete!</h1><p>20 Dummy Drivers and 20 Dummy Rides removed instantly.</p><p><a href="/admin/test-seed">Seed Again</a></p>`);
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
 });
 
 // 7. Unblock User (For testing or admin support)
