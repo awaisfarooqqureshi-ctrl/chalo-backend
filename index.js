@@ -40,42 +40,44 @@ try {
     console.error("❌ Firebase Initialization Error:", error.message);
 }
 
-// Modular Routes
+// Modular Routes & Middleware
 const { verifyAppKey, verifyToken, verifyAdmin } = require('./middleware/auth');
+const adminRoutes = require('./routes/admin');
 
-// Apply Global App Key Protection (Requires every request to have the secret header)
-// Skip check for OPTIONS and Admin Test/Seed routes for easy browser access
+// 1. PUBLIC ROUTES (No Security Check)
+app.use('/auth', require('./routes/auth'));
+
+// 2. SEMI-PUBLIC ADMIN ROUTES (Bypass JWT for Browser Access)
+app.get('/admin/test-seed', adminRoutes);
+app.get('/admin/test-clean', adminRoutes);
+app.get('/admin/bonuses/seed', adminRoutes);
+
+// 3. GLOBAL APP KEY PROTECTION (Applies to all routes below)
 app.use((req, res, next) => {
     if (req.method === 'OPTIONS') return next();
-    if (req.url.startsWith('/admin/test-') || req.url.startsWith('/admin/bonuses/seed')) return next();
     verifyAppKey(req, res, next);
 });
 
-app.use('/auth', require('./routes/auth'));
-
-// PROTECTED ROUTES (Require Login)
+// 4. PROTECTED ROUTES (Require JWT Token)
 app.use('/users', verifyToken, require('./routes/users'));
 app.use('/rides', verifyToken, require('./routes/rides'));
 app.use('/carpool', verifyToken, require('./routes/carpool'));
 app.use('/payments', verifyToken, require('./routes/payments'));
 app.use('/emergency', verifyToken, require('./routes/emergency'));
-app.use('/maps', require('./routes/maps')); // App Key protection still applies globally
+app.use('/maps', require('./routes/maps'));
 
-// ADMIN ONLY ROUTES
-app.use('/admin', verifyToken, verifyAdmin, require('./routes/admin'));
+// 5. SECURE ADMIN API (Remaining admin endpoints)
+app.use('/admin', verifyToken, verifyAdmin, adminRoutes);
 
-// Sockets Logic (Pure Firebase/Logic, no Mongo)
+// Sockets Logic
 io.on('connection', (socket) => {
     console.log("New client connected:", socket.id);
-
     socket.on('update_location', async (data) => {
         if (data.userId) {
             const cleanId = data.userId.replace('+', '').trim();
-            // Broadcast location directly via sockets for real-time maps
             io.emit('location_updated', { ...data, userId: cleanId });
         }
     });
-
     socket.on('disconnect', () => {
         console.log("Client disconnected:", socket.id);
     });
