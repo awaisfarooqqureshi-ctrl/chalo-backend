@@ -5,6 +5,12 @@ const CHALO_APP_KEY = process.env.CHALO_APP_KEY || 'chalo_app_v1_secret';
 
 // 1. Verify Global App Key (Prevents external API calls from tools like Postman without the key)
 const verifyAppKey = (req, res, next) => {
+    // Bypass for browser-based test/seed/unblock links
+    const url = req.originalUrl || req.url;
+    if (url.includes('/admin/test-') || url.includes('/admin/bonuses/seed') || url.includes('/admin/unblock/')) {
+        return next();
+    }
+
     const appKey = req.headers['x-chalo-app-key'];
     if (!appKey || appKey !== CHALO_APP_KEY) {
         return res.status(403).json({ success: false, message: "Forbidden: Invalid App Key" });
