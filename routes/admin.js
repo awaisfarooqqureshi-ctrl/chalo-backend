@@ -249,6 +249,8 @@ router.get('/test-clean', async (req, res) => {
 // 7. Simulate Bids from Dummy Drivers to a Real Ride
 router.get('/test-bids', async (req, res) => {
     try {
+        const { count } = req.query;
+        const bidCount = parseInt(count) || 5;
         const db = admin.database();
 
         // Find the first non-dummy active ride that's currently in bidding phase
@@ -274,7 +276,7 @@ router.get('/test-bids', async (req, res) => {
             return res.status(404).send("<h1>❌ No active passenger ride found!</h1><p>Please request a ride from the mobile app first.</p>");
         }
 
-        // Get 5 dummy drivers
+        // Get dummy drivers
         const usersSnap = await db.ref('users').get();
         const dummyDrivers = [];
         usersSnap.forEach(child => {
@@ -286,7 +288,7 @@ router.get('/test-bids', async (req, res) => {
              return res.status(404).send("<h1>❌ No dummy drivers found in database!</h1><p>Please run <b>/admin/test-seed</b> first.</p>");
         }
 
-        const selectedDrivers = dummyDrivers.sort(() => 0.5 - Math.random()).slice(0, 5);
+        const selectedDrivers = dummyDrivers.sort(() => 0.5 - Math.random()).slice(0, bidCount);
         const bids = [];
         const radius = 0.02; // Roughly 2km around the passenger
 
