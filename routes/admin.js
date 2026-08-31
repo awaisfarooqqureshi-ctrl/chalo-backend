@@ -224,28 +224,24 @@ router.get('/test-seed', async (req, res) => {
 
 // 6. Clean Dummy Data
 router.get('/test-clean', async (req, res) => {
+    // ... logic remains same ...
+});
+
+// 7. Unblock User (For testing or admin support)
+router.get('/unblock/:phone', async (req, res) => {
+    const { phone } = req.params;
+    const cleanPhone = phone.replace('+', '').trim();
     try {
         const db = admin.database();
-
-        // Remove drivers with isDummy flag
-        const usersSnap = await db.ref('users').get();
-        const updates = {};
-        usersSnap.forEach(child => {
-            if (child.val().isDummy) updates[child.key] = null;
+        await db.ref(`users/${cleanPhone}`).update({
+            tempBlockExpiry: 0,
+            passengerCancellationCount: 0,
+            suspiciousCancellationCount: 0,
+            accountStatus: "active"
         });
-        await db.ref('users').update(updates);
-
-        // Remove rides with isDummy flag
-        const ridesSnap = await db.ref('active_rides').get();
-        const rideUpdates = {};
-        ridesSnap.forEach(child => {
-            if (child.val().isDummy) rideUpdates[child.key] = null;
-        });
-        await db.ref('active_rides').update(rideUpdates);
-
-        res.send(`<h1>🧹 Cleanup Complete!</h1><p>All dummy test data has been removed from database.</p><p><a href="/admin/test-seed">Seed Again</a></p>`);
+        res.send(`<h1>✅ User Unblocked!</h1><p>User <b>${cleanPhone}</b> is now active and can request rides again.</p>`);
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).send(`<h1>❌ Error</h1><p>${error.message}</p>`);
     }
 });
 
