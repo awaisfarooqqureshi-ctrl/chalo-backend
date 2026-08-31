@@ -312,7 +312,22 @@ router.get('/test-bids', async (req, res) => {
 
 // 8. Unblock User
 router.get('/unblock/:phone', async (req, res) => {
-    // ... logic remains same ...
+    const { phone } = req.params;
+    const cleanPhone = phone.replace('+', '').trim();
+    try {
+        console.log(`🔓 Admin requesting unblock for: ${cleanPhone}`);
+        const db = admin.database();
+        await db.ref(`users/${cleanPhone}`).update({
+            tempBlockExpiry: 0,
+            passengerCancellationCount: 0,
+            suspiciousCancellationCount: 0,
+            accountStatus: "active"
+        });
+        res.send(`<h1>✅ User Unblocked!</h1><p>User <b>${cleanPhone}</b> is now active and can request rides again.</p><p><a href="/">Go to Home</a></p>`);
+    } catch (error) {
+        console.error("Unblock Error:", error.message);
+        res.status(500).send(`<h1>❌ Error</h1><p>${error.message}</p>`);
+    }
 });
 
 module.exports = router;
