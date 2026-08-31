@@ -3,26 +3,30 @@ const admin = require('firebase-admin');
 const CHALO_SECRET = process.env.CHALO_SECRET || 'fallback_secret';
 const CHALO_APP_KEY = process.env.CHALO_APP_KEY || 'chalo_app_v1_secret';
 
-// 1. Verify Global App Key (Prevents external API calls from tools like Postman without the key)
+// 1. Verify Global App Key
 const verifyAppKey = (req, res, next) => {
-    // Bypass for browser-based test/seed/unblock links
-    const url = req.originalUrl || req.url;
-    if (url.includes('/admin/test-') || url.includes('/admin/bonuses/seed') || url.includes('/admin/unblock/')) {
+    // Robust Bypass for browser testing
+    const path = req.originalUrl || req.url || "";
+    if (path.includes('/admin/test-') || path.includes('/admin/bonuses/seed') || path.includes('/admin/unblock/')) {
+        console.log(`🔓 Bypassing App Key for: ${path}`);
         return next();
     }
 
     const appKey = req.headers['x-chalo-app-key'];
     if (!appKey || appKey !== CHALO_APP_KEY) {
-        return res.status(403).json({ success: false, message: "Forbidden: Invalid App Key" });
+        return res.status(403).json({
+            success: false,
+            message: "Forbidden: Invalid App Key",
+            debug_path: path
+        });
     }
     next();
 };
 
 // 2. Verify User Token (JWT)
 const verifyToken = (req, res, next) => {
-    // Bypass for browser-based test/seed/unblock links using originalUrl
-    const url = req.originalUrl || req.url;
-    if (url.includes('/admin/test-') || url.includes('/admin/bonuses/seed') || url.includes('/admin/unblock/')) {
+    const path = req.originalUrl || req.url || "";
+    if (path.includes('/admin/test-') || path.includes('/admin/bonuses/seed') || path.includes('/admin/unblock/')) {
         return next();
     }
 
