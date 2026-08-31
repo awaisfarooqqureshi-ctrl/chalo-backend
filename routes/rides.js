@@ -167,24 +167,16 @@ router.post('/bid', async (req, res) => {
     try {
         const { rideId, offer } = req.body;
         const db = admin.database();
-        const rideRef = db.ref(`active_rides/${rideId}`);
-
-        const snapshot = await rideRef.get();
-        if (!snapshot.exists()) return res.status(404).send("Ride not found");
-
-        const ride = snapshot.val();
-        const offers = ride.offers || [];
 
         if (!offer || !offer.driverId) {
             return res.status(400).send("Invalid offer data");
         }
 
-        await rideRef.update({
-            offers: [...offers, offer],
-            status: 'BIDS_RECEIVED'
-        });
+        // Use driverId as the key in the offers Map for consistency and to avoid duplicates
+        await db.ref(`active_rides/${rideId}/offers/${offer.driverId}`).set(offer);
+        await db.ref(`active_rides/${rideId}`).update({ status: 'BIDS_RECEIVED' });
 
-        console.log(`💰 Full Bid received for: ${rideId} from ${offer.driverName}`);
+        console.log(`💰 Bid received for ride ${rideId} from driver ${offer.driverId}`);
         res.json({ success: true });
     } catch (e) {
         console.error("Bid Error:", e.message);
@@ -208,7 +200,10 @@ router.post('/accept-bid', async (req, res) => {
         if (!driverSnap.exists()) return res.status(404).send("Driver not found");
 
         const driver = driverSnap.val();
-        const offers = ride.offers || [];
+
+        // Convert Map to Array for logic handling if needed
+        const offersMap = ride.offers || {};
+        const offers = Object.values(offersMap);
 
         // 1. Calculate Commission
         const configSnap = await db.ref('admin_config/settings').get();
@@ -218,10 +213,11 @@ router.post('/accept-bid', async (req, res) => {
 
         const commissionAmount = (acceptedOffer.bidFare * commissionRate) / 100;
 
-        // 2. Update Offers status (one accepted, others rejected)
-        const updatedOffers = offers.map(o => {
-            if (o.id === offerId || o.driverId === driverId) return { ...o, status: 'ACCEPTED' };
-            return { ...o, status: 'REJECTED' };
+        // 2. Update Offers status in the Map
+        const updatedOffers = { ...offersMap };
+        Object.keys(updatedOffers).forEach(id => {
+            if (id === driverId) updatedOffers[id] = { ...updatedOffers[id], status: 'ACCEPTED' };
+            else updatedOffers[id] = { ...updatedOffers[id], status: 'REJECTED' };
         });
 
         // 3. Update Driver Record (Wallet + Status)
