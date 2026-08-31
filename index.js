@@ -44,7 +44,11 @@ try {
 const { verifyAppKey, verifyToken, verifyAdmin } = require('./middleware/auth');
 
 // Apply Global App Key Protection (Requires every request to have the secret header)
-app.use(verifyAppKey);
+// Skip check for OPTIONS (CORS Preflight)
+app.use((req, res, next) => {
+    if (req.method === 'OPTIONS') return next();
+    verifyAppKey(req, res, next);
+});
 
 app.use('/auth', require('./routes/auth'));
 
@@ -54,7 +58,7 @@ app.use('/rides', verifyToken, require('./routes/rides'));
 app.use('/carpool', verifyToken, require('./routes/carpool'));
 app.use('/payments', verifyToken, require('./routes/payments'));
 app.use('/emergency', verifyToken, require('./routes/emergency'));
-app.use('/maps', verifyToken, require('./routes/maps'));
+app.use('/maps', require('./routes/maps')); // App Key protection still applies globally
 
 // ADMIN ONLY ROUTES
 app.use('/admin', verifyToken, verifyAdmin, require('./routes/admin'));
