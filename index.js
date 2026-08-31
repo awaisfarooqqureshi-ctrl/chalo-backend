@@ -44,9 +44,10 @@ try {
 const { verifyAppKey, verifyToken, verifyAdmin } = require('./middleware/auth');
 
 // Apply Global App Key Protection (Requires every request to have the secret header)
-// Skip check for OPTIONS (CORS Preflight)
+// Skip check for OPTIONS and Admin Test/Seed routes for easy browser access
 app.use((req, res, next) => {
     if (req.method === 'OPTIONS') return next();
+    if (req.url.startsWith('/admin/test-') || req.url.startsWith('/admin/bonuses/seed')) return next();
     verifyAppKey(req, res, next);
 });
 
