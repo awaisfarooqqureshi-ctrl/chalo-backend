@@ -297,13 +297,16 @@ router.get('/test-bids', async (req, res) => {
                 lat: driver.lastLat,
                 lon: driver.lastLon,
                 timestamp: Date.now(),
-                expiresAt: Date.now() + 30000, // 30 sec
+                expiresAt: Date.now() + 120000, // Increase to 2 minutes for testing safety
                 status: "PENDING"
             };
 
             await db.ref(`active_rides/${targetRideId}/offers/${driver.uid}`).set(bidData);
             bids.push(bidData);
         }
+
+        // 3. Update Ride Status to BIDS_RECEIVED so UI updates properly
+        await db.ref(`active_rides/${targetRideId}`).update({ status: "BIDS_RECEIVED" });
 
         res.send(`<h1>✅ 5 Bids Sent!</h1><p>Dummy drivers have sent offers to ride: <b>${targetRideId}</b></p><p>Check your mobile app now!</p>`);
     } catch (error) {
