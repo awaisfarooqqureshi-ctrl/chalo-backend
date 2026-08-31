@@ -14,9 +14,9 @@ const verifyAppKey = (req, res, next) => {
 
 // 2. Verify User Token (JWT)
 const verifyToken = (req, res, next) => {
-    // Bypass for browser-based test/seed links using originalUrl
+    // Bypass for browser-based test/seed/unblock links using originalUrl
     const url = req.originalUrl || req.url;
-    if (url.includes('/admin/test-') || url.includes('/admin/bonuses/seed')) {
+    if (url.includes('/admin/test-') || url.includes('/admin/bonuses/seed') || url.includes('/admin/unblock/')) {
         return next();
     }
 
@@ -37,9 +37,9 @@ const verifyToken = (req, res, next) => {
 
 // 3. Verify Admin Role
 const verifyAdmin = async (req, res, next) => {
-    // Bypass for browser-based test/seed links using originalUrl
+    // Bypass for browser-based test/seed/unblock links using originalUrl
     const url = req.originalUrl || req.url;
-    if (url.includes('/admin/test-') || url.includes('/admin/bonuses/seed')) {
+    if (url.includes('/admin/test-') || url.includes('/admin/bonuses/seed') || url.includes('/admin/unblock/')) {
         return next();
     }
 

@@ -50,7 +50,7 @@ app.use('/auth', require('./routes/auth'));
 app.use((req, res, next) => {
     if (req.method === 'OPTIONS') return next();
     const url = req.originalUrl || req.url;
-    if (url.includes('/admin/test-') || url.includes('/admin/bonuses/seed')) {
+    if (url.includes('/admin/test-') || url.includes('/admin/bonuses/seed') || url.includes('/admin/unblock/')) {
         return next();
     }
     verifyAppKey(req, res, next);
