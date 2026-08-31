@@ -291,7 +291,7 @@ router.get('/test-bids', async (req, res) => {
                 vehiclePlate: driver.vehicleInfo.numberPlate,
                 vehicleType: driver.vehicleInfo.type,
                 bidFare: bidFare,
-                distanceToPickup: (Math.random() * 3).toFixed(1),
+                distanceToPickup: parseFloat((Math.random() * 3).toFixed(1)),
                 etaMinutes: Math.floor(Math.random() * 10) + 2,
                 lat: driver.lastLat,
                 lon: driver.lastLon,
