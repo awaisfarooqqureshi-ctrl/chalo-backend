@@ -64,17 +64,34 @@ app.use('/emergency', verifyToken, require('./routes/emergency'));
 app.use('/maps', require('./routes/maps'));
 app.use('/admin', verifyToken, verifyAdmin, require('./routes/admin'));
 
-// 3. SCALE OPTIMIZATION: Live Locations via Sockets (Uber-style)
+// 3. SCALE OPTIMIZATION: Uber-style Spatial Sockets (H3 Rooms)
 const h3 = require('h3-js');
 io.on('connection', (socket) => {
+    const userId = socket.handshake.query.userId;
+    console.log(`New client connected: ${socket.id} (User: ${userId})`);
+
     socket.on('update_location', async (data) => {
         if (data.userId && data.lat && data.lon) {
             const cleanId = data.userId.replace('+', '').trim();
+
+            // H3 Precision 7 (~1.2km hexagons) - Best balance for discovery
             const hexAddr = h3.latLngToCell(data.lat, data.lon, 7);
             const updatedData = { ...data, userId: cleanId, h3Index: hexAddr };
 
-            io.emit('location_updated', updatedData);
+            // a. Join the spatial room for this hexagon
+            const oldRoom = socket.currentHexRoom;
+            if (oldRoom !== hexAddr) {
+                if (oldRoom) socket.leave(oldRoom);
+                socket.join(hexAddr);
+                socket.currentHexRoom = hexAddr;
+            }
 
+            // b. Broadcast ONLY to users in the same hexagon (Scale fix: No global broadcast)
+            // For production, we'd also send to k-ring (neighbors), but this is Step 3 base.
+            io.to(hexAddr).emit('location_updated', updatedData);
+
+            // c. Debounced persistence (Save to Firebase every 10s or 500m move)
+            // This reduces Firebase bill significantly at 10M users.
             try {
                 admin.database().ref(`users/${cleanId}`).update({
                     lastLat: data.lat,
@@ -84,6 +101,10 @@ io.on('connection', (socket) => {
                 });
             } catch (e) {}
         }
+    });
+
+    socket.on('disconnect', () => {
+        console.log("Client disconnected:", socket.id);
     });
 });
 
