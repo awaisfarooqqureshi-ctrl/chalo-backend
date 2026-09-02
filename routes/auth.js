@@ -14,7 +14,7 @@ const SMS_CONFIG = {
 
 const CHALO_SECRET = process.env.CHALO_SECRET || 'fallback_secret';
 
-// 1. Send OTP (Saving to RTDB instead of MongoDB)
+// 1. Send OTP (Optimized for Auto-Verification)
 router.post('/send-otp-veevo', async (req, res) => {
     let { phone } = req.body;
     if (!phone) return res.status(400).json({ success: false, message: "Phone required" });
@@ -23,7 +23,7 @@ router.post('/send-otp-veevo', async (req, res) => {
     const cleanPhone = phone.replace(/\D/g, '').trim();
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // EXACT MATCH with your portal template
+    // EXACT MATCH with your portal template for Auto-OTP detection
     const message = `<#> Your Chalo App OTP is: ${otpCode}. bdGiWfgWrVy`;
 
     console.log(`✉️ Attempting to send SMS to: ${cleanPhone}`);
@@ -56,25 +56,11 @@ router.post('/send-otp-veevo', async (req, res) => {
         res.status(500).json({ success: false, message: "SMS Gateway Unreachable" });
     }
 });
-            const db = admin.database();
-            await db.ref(`temp_otps/${cleanPhone}`).set({
-                otp: otpCode,
-                timestamp: Date.now()
-            });
-
-            res.json({ success: true, message: "OTP Sent Successfully" });
-        } else {
-            res.status(400).json({ success: false, message: "Gateway Refused SMS" });
-        }
-    } catch (error) {
-        res.status(500).json({ success: false, message: "SMS Gateway Unreachable" });
-    }
-});
 
 // 2. Verify OTP & Create User in RTDB (Optimized for Rewards)
 router.post('/verify-otp-veevo', async (req, res) => {
     let { phone, otp } = req.body;
-    const cleanPhone = phone.replace('+', '').trim();
+    const cleanPhone = phone.replace(/\D/g, '').trim();
 
     try {
         const db = admin.database();
@@ -91,7 +77,7 @@ router.post('/verify-otp-veevo', async (req, res) => {
         // 1. Fetch System Config for Rewards
         const configSnap = await db.ref('admin_config/settings').get();
         const config = configSnap.val() || {};
-        const welcomeBonus = config.welcome_bonus_amount || 0; // Set via admin_config.json
+        const welcomeBonus = config.welcome_bonus_amount || 0;
 
         // 2. Check if user exists in RTDB
         const userRef = db.ref(`users/${cleanPhone}`);
@@ -128,7 +114,6 @@ router.post('/verify-otp-veevo', async (req, res) => {
             await userRef.set(userData);
         } else {
             userData = userSnap.val();
-            console.log(`Returning existing user: ${cleanPhone}. No new bonus applied.`);
         }
 
         const firebaseToken = await admin.auth().createCustomToken(cleanPhone);
