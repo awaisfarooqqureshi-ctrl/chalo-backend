@@ -3,9 +3,23 @@ const cors = require('cors');
 const http = require('http');
 const { Server } = require('socket.io');
 const admin = require('firebase-admin');
+const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
 const app = express();
+
+// 1. RATE LIMITING (Scale Optimization: Prevents Bot Abuse & Cost Spikes)
+const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 200, // Limit each IP to 200 requests per window
+    message: { success: false, message: "Too many requests from this IP, please try again after 15 minutes." },
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+
+// Apply rate limiter to all routes
+app.use(limiter);
+
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
@@ -64,11 +78,28 @@ app.use('/maps', verifyToken, require('./routes/maps'));
 app.use('/admin', verifyToken, verifyAdmin, require('./routes/admin'));
 
 // Sockets Logic
+const geohash = require('ngeohash');
 io.on('connection', (socket) => {
     socket.on('update_location', async (data) => {
-        if (data.userId) {
+        if (data.userId && data.lat && data.lon) {
             const cleanId = data.userId.replace('+', '').trim();
-            io.emit('location_updated', { ...data, userId: cleanId });
+
+            // Add Geohash on server side for consistency
+            const hash = geohash.encode(data.lat, data.lon, 7);
+            const updatedData = { ...data, userId: cleanId, geohash: hash };
+
+            // Broadcast location directly via sockets
+            io.emit('location_updated', updatedData);
+
+            // Optional: Update Firebase RTDB for persistence if not already done by app
+            try {
+                admin.database().ref(`users/${cleanId}`).update({
+                    lastLat: data.lat,
+                    lastLon: data.lon,
+                    geohash: hash,
+                    lastSeen: Date.now()
+                });
+            } catch (e) { /* ignore */ }
         }
     });
     socket.on('disconnect', () => { });
