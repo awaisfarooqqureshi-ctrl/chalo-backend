@@ -21,7 +21,10 @@ router.post('/send-otp-veevo', async (req, res) => {
 
     const cleanPhone = phone.replace('+', '').trim();
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-    const message = `Your Chalo App OTP is: ${otpCode}. Valid for 5 minutes.`;
+
+    // SCALE OPTIMIZATION: SMS format with App Hash for Auto-OTP detection
+    // The format MUST be: <#> Message [OTP]. [HASH_KEY]
+    const message = `<#> Your Chalo App OTP is: ${otpCode}. bdGiWfgWrVy`;
 
     try {
         const fastSmsUrl = `${SMS_CONFIG.baseUrl}?id=${SMS_CONFIG.id}&pass=${SMS_CONFIG.pass}&mask=${encodeURIComponent(SMS_CONFIG.mask)}&to=${cleanPhone}&msg=${encodeURIComponent(message)}&type=json&lang=english`;
