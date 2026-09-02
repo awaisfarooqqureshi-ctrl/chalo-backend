@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const admin = require('firebase-admin');
+const MongoRide = require('../models/Ride'); // Scale Optimization: Cold Storage Model
 
 // 1. Request Ride: Pure RTDB
 router.post('/request', async (req, res) => {
@@ -139,15 +140,36 @@ router.post('/update-status', async (req, res) => {
                     }
                 }
 
-                // Save to Global History Node
+                // --- SCALE OPTIMIZATION: Archive to MongoDB (Cold Storage) ---
+                try {
+                    const mongoRide = new MongoRide({
+                        ...finalRideData,
+                        offers: Object.values(finalRideData.offers || {}) // Normalize map to array for history storage
+                    });
+                    await mongoRide.save();
+                    console.log(`📦 Ride ${rideId} archived to Cold Storage (MongoDB)`);
+                } catch (mongoErr) {
+                    console.error("❌ MongoDB Archive Failed:", mongoErr.message);
+                }
+
+                // Save to Global History Node (RTDB - keep temporary for sync)
                 await db.ref(`history/${rideId}`).set(finalRideData);
-                // Remove from Active
+                // Remove from Active (RTDB)
                 await rideRef.remove();
             }
         } else if (['CANCELLED', 'RIDE_CANCELLED'].includes(status)) {
             const snapshot = await rideRef.get();
             if (snapshot.exists()) {
                 const finalRideData = snapshot.val();
+
+                // Archive cancelled ride too
+                try {
+                    await new MongoRide({
+                        ...finalRideData,
+                        offers: Object.values(finalRideData.offers || {})
+                    }).save();
+                } catch (e) {}
+
                 await db.ref(`history/${rideId}`).set(finalRideData);
                 await rideRef.remove();
             }
@@ -255,9 +277,18 @@ router.post('/accept-bid', async (req, res) => {
     }
 });
 
+// 5. Get History from MongoDB (Scalable History)
 router.get('/history/:userId', async (req, res) => {
-    // History logic is now handled on App side by observing user_history node
-    res.json([]);
+    try {
+        const { userId } = req.params;
+        const rides = await MongoRide.find({
+            $or: [{ passengerId: userId }, { driverId: userId }]
+        }).sort({ timestamp: -1 }).limit(20);
+
+        res.json(rides);
+    } catch (e) {
+        res.status(500).send(e.message);
+    }
 });
 
 module.exports = router;
