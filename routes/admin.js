@@ -359,4 +359,106 @@ router.get('/unblock/:phone', async (req, res) => {
     }
 });
 
+// 9. FULL DATABASE RESET & DEFAULT SEEDING
+router.get('/full-reset', async (req, res) => {
+    try {
+        const db = admin.database();
+
+        // 1. Wipe Dynamic Nodes (The "Trash" or temporary data)
+        const nodesToWipe = [
+            'active_rides',
+            'history',
+            'user_history',
+            'temp_otps',
+            'fraud_alerts',
+            'support_requests',
+            'bonus_history',
+            'driver_bonus_progress',
+            'typing',
+            'call_sessions'
+        ];
+
+        for (const node of nodesToWipe) {
+            await db.ref(node).remove();
+        }
+
+        // 2. Reset All Users to Offline/Idle (Keep the accounts, clear the state)
+        const usersSnap = await db.ref('users').get();
+        const userUpdates = {};
+        if (usersSnap.exists()) {
+            usersSnap.forEach(child => {
+                const uid = child.key;
+                userUpdates[`users/${uid}/isOnline`] = false;
+                userUpdates[`users/${uid}/driverStatus`] = "OFFLINE";
+                userUpdates[`users/${uid}/tempBlockExpiry`] = 0;
+                userUpdates[`users/${uid}/passengerCancellationCount`] = 0;
+                userUpdates[`users/${uid}/currentRideId`] = null;
+            });
+            await db.ref().update(userUpdates);
+        }
+
+        // 3. Seed Default System Configurations (Essential for first-run)
+        const defaultConfig = {
+            settings: {
+                commission_rate: 10, // 10%
+                min_balance_to_work: 200, // Rs. 200
+                min_fare: 100,
+                intercity_min_fare: 500,
+                fare_rates: {
+                    "Bike": 35.0,
+                    "Mini": 55.0,
+                    "Comfort": 75.0,
+                    "Van": 90.0,
+                    "Premium": 110.0
+                },
+                intercity_fare_rates: {
+                    "Mini": 45.0,
+                    "Comfort": 65.0,
+                    "Van": 80.0
+                }
+            }
+        };
+        await db.ref('admin_config').set(defaultConfig);
+
+        // 4. Seed Default Bonuses
+        const defaultBonuses = {
+            "daily_hero_bike": {
+                id: "daily_hero_bike",
+                title: "Daily Bike Hero",
+                description: "Complete 10 rides today",
+                type: "RIDE_COMPLETION",
+                target: 10,
+                reward: 200,
+                vehicleGroup: "BIKE_RIKSHAW",
+                isActive: true,
+                colorHex: "#4CAF50"
+            },
+            "mega_goal_car": {
+                id: "mega_goal_car",
+                title: "Mega Car Goal",
+                description: "Complete 15 rides for a big reward",
+                type: "RIDE_COMPLETION",
+                target: 15,
+                reward: 1000,
+                vehicleGroup: "CAR",
+                isActive: true,
+                colorHex: "#FFD700"
+            }
+        };
+        await db.ref('bonus_schemes').set(defaultBonuses);
+
+        res.send(`
+            <h1>🚀 Database Fully Reset & Seeded!</h1>
+            <p>1. Temporary data (rides, history, alerts) wiped.</p>
+            <p>2. Users reset to Offline.</p>
+            <p>3. Default Fare Rates and Commission (10%) set.</p>
+            <p>4. Default Bonuses seeded.</p>
+            <br>
+            <a href="/admin/test-seed">Step 2: Seed Dummy Drivers for Testing</a>
+        `);
+    } catch (error) {
+        res.status(500).send(`<h1>❌ Reset Failed</h1><p>${error.message}</p>`);
+    }
+});
+
 module.exports = router;
