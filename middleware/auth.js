@@ -3,38 +3,17 @@ const admin = require('firebase-admin');
 const CHALO_SECRET = process.env.CHALO_SECRET || 'fallback_secret';
 const CHALO_APP_KEY = process.env.CHALO_APP_KEY || 'chalo_app_v1_secret';
 
-// 1. Verify Global App Key
+// 1. Verify Global App Key (STRICT PRODUCTION MODE)
 const verifyAppKey = (req, res, next) => {
-    // Robust Bypass for browser-based admin testing tools
-    const path = req.originalUrl || req.url || "";
-    if (path.includes('/admin/full-reset') ||
-        path.includes('/admin/test-') ||
-        path.includes('/admin/unblock/') ||
-        path.includes('/admin/bonuses/seed')) {
-        return next();
-    }
-
     const appKey = req.headers['x-chalo-app-key'];
     if (!appKey || appKey !== CHALO_APP_KEY) {
-        return res.status(403).json({
-            success: false,
-            message: "Forbidden: Invalid App Key"
-        });
+        return res.status(403).json({ success: false, message: "Forbidden: Invalid App Key" });
     }
     next();
 };
 
 // 2. Verify User Token (JWT)
 const verifyToken = (req, res, next) => {
-    // Bypass for browser-based admin testing tools
-    const path = req.originalUrl || req.url || "";
-    if (path.includes('/admin/full-reset') ||
-        path.includes('/admin/test-') ||
-        path.includes('/admin/unblock/') ||
-        path.includes('/admin/bonuses/seed')) {
-        return next();
-    }
-
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
         return res.status(401).json({ success: false, message: "Unauthorized: No token provided" });
@@ -52,15 +31,6 @@ const verifyToken = (req, res, next) => {
 
 // 3. Verify Admin Role
 const verifyAdmin = async (req, res, next) => {
-    // Bypass for browser-based admin testing tools
-    const path = req.originalUrl || req.url || "";
-    if (path.includes('/admin/full-reset') ||
-        path.includes('/admin/test-') ||
-        path.includes('/admin/unblock/') ||
-        path.includes('/admin/bonuses/seed')) {
-        return next();
-    }
-
     const userId = req.user?.userId;
     if (!userId) return res.status(403).json({ success: false, message: "Access Forbidden" });
 
