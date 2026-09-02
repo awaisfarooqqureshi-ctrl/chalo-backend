@@ -46,13 +46,9 @@ const { verifyAppKey, verifyToken, verifyAdmin } = require('./middleware/auth');
 // 1. PUBLIC ROUTES
 app.use('/auth', require('./routes/auth'));
 
-// 2. SEMI-PUBLIC ADMIN ROUTES (Bypass Global App Key for Browser)
+// 2. GLOBAL APP KEY PROTECTION (Applies to all routes below)
 app.use((req, res, next) => {
     if (req.method === 'OPTIONS') return next();
-    const url = req.originalUrl || req.url;
-    if (url.includes('/admin/test-') || url.includes('/admin/bonuses/seed') || url.includes('/admin/unblock/')) {
-        return next();
-    }
     verifyAppKey(req, res, next);
 });
 
