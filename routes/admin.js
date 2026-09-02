@@ -359,49 +359,32 @@ router.get('/unblock/:phone', async (req, res) => {
     }
 });
 
-// 9. FULL DATABASE RESET & DEFAULT SEEDING
+// 9. FULL SYSTEM WIPE & FRESH START (RTDB + MongoDB)
 router.get('/full-reset', async (req, res) => {
     try {
         const db = admin.database();
+        const MongoRide = require('../models/Ride');
+        const MongoUser = require('../models/User'); // Import if exists, else generic drop
+        const mongoose = require('mongoose');
 
-        // 1. Wipe Dynamic Nodes (The "Trash" or temporary data)
-        const nodesToWipe = [
-            'active_rides',
-            'history',
-            'user_history',
-            'temp_otps',
-            'fraud_alerts',
-            'support_requests',
-            'bonus_history',
-            'driver_bonus_progress',
-            'typing',
-            'call_sessions'
-        ];
+        // 1. Wipe EVERYTHING from Firebase Realtime Database
+        console.log("🔥 Wiping RTDB...");
+        await db.ref('/').remove();
 
-        for (const node of nodesToWipe) {
-            await db.ref(node).remove();
+        // 2. Wipe EVERYTHING from MongoDB
+        console.log("🍃 Wiping MongoDB...");
+        try {
+            await mongoose.connection.db.dropDatabase();
+        } catch (mErr) {
+            console.warn("MongoDB drop warning:", mErr.message);
         }
 
-        // 2. Reset All Users to Offline/Idle (Keep the accounts, clear the state)
-        const usersSnap = await db.ref('users').get();
-        const userUpdates = {};
-        if (usersSnap.exists()) {
-            usersSnap.forEach(child => {
-                const uid = child.key;
-                userUpdates[`users/${uid}/isOnline`] = false;
-                userUpdates[`users/${uid}/driverStatus`] = "OFFLINE";
-                userUpdates[`users/${uid}/tempBlockExpiry`] = 0;
-                userUpdates[`users/${uid}/passengerCancellationCount`] = 0;
-                userUpdates[`users/${uid}/currentRideId`] = null;
-            });
-            await db.ref().update(userUpdates);
-        }
-
-        // 3. Seed Default System Configurations (Essential for first-run)
+        // 3. Seed Essential System Configurations (The "Foundation")
+        console.log("🌱 Seeding Fresh Configs...");
         const defaultConfig = {
             settings: {
-                commission_rate: 10, // 10%
-                min_balance_to_work: 200, // Rs. 200
+                commission_rate: 10,
+                min_balance_to_work: 200,
                 min_fare: 100,
                 intercity_min_fare: 500,
                 fare_rates: {
@@ -420,7 +403,7 @@ router.get('/full-reset', async (req, res) => {
         };
         await db.ref('admin_config').set(defaultConfig);
 
-        // 4. Seed Default Bonuses
+        // 4. Seed Default Bonus Schemes
         const defaultBonuses = {
             "daily_hero_bike": {
                 id: "daily_hero_bike",
@@ -448,15 +431,24 @@ router.get('/full-reset', async (req, res) => {
         await db.ref('bonus_schemes').set(defaultBonuses);
 
         res.send(`
-            <h1>🚀 Database Fully Reset & Seeded!</h1>
-            <p>1. Temporary data (rides, history, alerts) wiped.</p>
-            <p>2. Users reset to Offline.</p>
-            <p>3. Default Fare Rates and Commission (10%) set.</p>
-            <p>4. Default Bonuses seeded.</p>
-            <br>
-            <a href="/admin/test-seed">Step 2: Seed Dummy Drivers for Testing</a>
+            <div style="font-family: sans-serif; padding: 40px; text-align: center;">
+                <h1 style="color: #4CAF50;">✨ Full System Wipe Successful!</h1>
+                <p>Firebase RTDB and MongoDB have been completely cleared.</p>
+                <div style="background: #f4f4f4; padding: 20px; border-radius: 10px; display: inline-block; text-align: left;">
+                    <b>What happened?</b>
+                    <ul>
+                        <li>All Users deleted from Database (Not Auth).</li>
+                        <li>All Ride History & Active Rides deleted.</li>
+                        <li>All MongoDB Collections dropped.</li>
+                        <li>Fresh 10% Commission & Fare Rates applied.</li>
+                    </ul>
+                </div>
+                <p>App is now in a "Day 1" fresh state.</p>
+                <a href="/admin/test-seed" style="background: #FFC107; color: black; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">Step 2: Seed Dummy Data for Testing</a>
+            </div>
         `);
     } catch (error) {
+        console.error("Master Reset Error:", error);
         res.status(500).send(`<h1>❌ Reset Failed</h1><p>${error.message}</p>`);
     }
 });
