@@ -80,9 +80,10 @@ router.get('/reverse', async (req, res) => {
         try {
             const nomRes = await axios.get(nomUrl, {
                 headers: { 'User-Agent': 'ChaloDrive-App-Scale-Proxy' },
-                timeout: 4000
+                timeout: 3000
             });
-            if (nomRes.data.display_name) {
+            // NOMINATIM SCALE FIX: If result is too short or just numbers, it's a poor result
+            if (nomRes.data.display_name && nomRes.data.display_name.length > 15) {
                 console.log("✅ Reverse Geocoding Success (OSM)");
                 const result = {
                     status: "OK",
@@ -92,7 +93,7 @@ router.get('/reverse', async (req, res) => {
                 return res.json(result);
             }
         } catch (err) {
-            console.warn("⚠️ OSM Reverse Failed, using Google...");
+            console.warn("⚠️ OSM Reverse Failed or Poor Quality, using Google...");
         }
 
         // Google Fallback

@@ -259,8 +259,9 @@ router.post('/accept-bid', async (req, res) => {
             offeredFare: acceptedOffer.bidFare,
             offers: updatedOffers,
             commissionAmount: commissionAmount,
+            vehicleType: driver.vehicleInfo?.type || ride.vehicleType, // SYNC: Update root vehicleType to driver's actual type
             vehicleInfo: {
-                type: ride.vehicleType,
+                type: driver.vehicleInfo?.type || ride.vehicleType,
                 model: driver.vehicleInfo?.model || acceptedOffer.vehicleModel,
                 numberPlate: driver.vehicleInfo?.numberPlate || acceptedOffer.vehiclePlate
             }
