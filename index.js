@@ -8,6 +8,10 @@ const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
 const app = express();
+
+// 0. TRUST PROXY (Required for Railway/Cloud deployments to identify client IP)
+app.set('trust proxy', 1);
+
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 

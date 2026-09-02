@@ -19,22 +19,43 @@ router.post('/send-otp-veevo', async (req, res) => {
     let { phone } = req.body;
     if (!phone) return res.status(400).json({ success: false, message: "Phone required" });
 
-    const cleanPhone = phone.replace('+', '').trim();
+    // Clean number to strictly digits (923001234567)
+    const cleanPhone = phone.replace(/\D/g, '').trim();
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // SCALE OPTIMIZATION: SMS format with App Hash for Auto-OTP detection
-    // The format MUST be: <#> Message [OTP]. [HASH_KEY]
+    // EXACT MATCH with your portal template
     const message = `<#> Your Chalo App OTP is: ${otpCode}. bdGiWfgWrVy`;
+
+    console.log(`✉️ Attempting to send SMS to: ${cleanPhone}`);
+    console.log(`📝 Message Content: ${message}`);
 
     try {
         const fastSmsUrl = `${SMS_CONFIG.baseUrl}?id=${SMS_CONFIG.id}&pass=${SMS_CONFIG.pass}&mask=${encodeURIComponent(SMS_CONFIG.mask)}&to=${cleanPhone}&msg=${encodeURIComponent(message)}&type=json&lang=english`;
 
         const response = await axios.get(fastSmsUrl);
+        console.log("📡 Gateway API Response:", JSON.stringify(response.data));
 
         const isSuccess = response.data && (response.data.status === "success" || response.data.message_id || (typeof response.data === 'string' && response.data.includes("Successfully")));
 
         if (isSuccess || response.status === 200) {
-            // SAVE OTP TO FIREBASE RTDB (Auto-expire in 5 mins logic should be on client or manual cleanup)
+            // SAVE OTP TO FIREBASE RTDB
+            const db = admin.database();
+            await db.ref(`temp_otps/${cleanPhone}`).set({
+                otp: otpCode,
+                timestamp: Date.now()
+            });
+
+            console.log(`✅ OTP ${otpCode} successfully saved in DB for ${cleanPhone}`);
+            res.json({ success: true, message: "OTP Sent Successfully" });
+        } else {
+            console.error("❌ Gateway Refused SMS:", response.data);
+            res.status(400).json({ success: false, message: "Gateway Refused SMS", gatewayResponse: response.data });
+        }
+    } catch (error) {
+        console.error("❌ SMS Gateway Error:", error.message);
+        res.status(500).json({ success: false, message: "SMS Gateway Unreachable" });
+    }
+});
             const db = admin.database();
             await db.ref(`temp_otps/${cleanPhone}`).set({
                 otp: otpCode,
