@@ -47,7 +47,7 @@ router.post('/send-otp-veevo', async (req, res) => {
     }
 });
 
-// 2. Verify OTP & Create User in RTDB
+// 2. Verify OTP & Create User in RTDB (Optimized for Rewards)
 router.post('/verify-otp-veevo', async (req, res) => {
     let { phone, otp } = req.body;
     const cleanPhone = phone.replace('+', '').trim();
@@ -64,7 +64,12 @@ router.post('/verify-otp-veevo', async (req, res) => {
         // Delete OTP after use
         await otpRef.remove();
 
-        // Check if user exists in RTDB
+        // 1. Fetch System Config for Rewards
+        const configSnap = await db.ref('admin_config/settings').get();
+        const config = configSnap.val() || {};
+        const welcomeBonus = config.welcome_bonus_amount || 0; // Set via admin_config.json
+
+        // 2. Check if user exists in RTDB
         const userRef = db.ref(`users/${cleanPhone}`);
         const userSnap = await userRef.get();
         let userData;
@@ -76,23 +81,30 @@ router.post('/verify-otp-veevo', async (req, res) => {
                 phoneNumber: phone,
                 name: "",
                 role: "Passenger",
-                walletBalance: 50,
+                walletBalance: welcomeBonus,
                 accountStatus: "active",
                 driverRegistered: false,
                 driverVerificationStatus: "not_submitted",
-                transactions: {
-                    "welcome": {
-                        title: "Welcome Bonus",
-                        amount: 50,
-                        type: "CREDIT",
-                        timestamp: Date.now(),
-                        status: "COMPLETED"
-                    }
-                }
+                welcomeBonusApplied: welcomeBonus > 0,
+                createdAt: Date.now(),
+                transactions: {}
             };
+
+            if (welcomeBonus > 0) {
+                const tid = "welcome_" + Date.now();
+                userData.transactions[tid] = {
+                    id: tid,
+                    title: "Welcome Bonus",
+                    amount: welcomeBonus,
+                    type: "CREDIT",
+                    timestamp: Date.now(),
+                    status: "COMPLETED"
+                };
+            }
             await userRef.set(userData);
         } else {
             userData = userSnap.val();
+            console.log(`Returning existing user: ${cleanPhone}. No new bonus applied.`);
         }
 
         const firebaseToken = await admin.auth().createCustomToken(cleanPhone);
