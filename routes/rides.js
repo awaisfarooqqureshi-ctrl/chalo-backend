@@ -259,11 +259,23 @@ router.post('/update-payment', async (req, res) => {
 router.get('/history/:userId', async (req, res) => {
     try {
         const cleanId = req.params.userId.replace(/\+/g, '').trim();
+        console.log(`📜 Fetching history for user: ${cleanId}`);
+
         const rides = await MongoRide.find({
-            $or: [{ passengerId: cleanId }, { driverId: cleanId }]
+            $or: [
+                { passengerId: cleanId },
+                { driverId: cleanId },
+                { "passengerId": `+${cleanId}` }, // Support legacy + prefix
+                { "driverId": `+${cleanId}` }
+            ]
         }).sort({ timestamp: -1 }).limit(30);
+
+        console.log(`✅ Found ${rides.length} rides in MongoDB for ${cleanId}`);
         res.json(rides);
-    } catch (e) { res.status(500).send(e.message); }
+    } catch (e) {
+        console.error("❌ History Fetch Error:", e.message);
+        res.status(500).send(e.message);
+    }
 });
 
 module.exports = router;
