@@ -123,30 +123,28 @@ router.post('/initiate', async (req, res) => {
         // Prepare URLSearchParams for Redirect Flow (x-www-form-urlencoded)
         const params = new URLSearchParams();
         params.append('MERCHANT_ID', RAPID_MERCHANT_ID);
-        params.append('MERCHANT_NAME', 'Chalo Drive');
+        params.append('MERCHANT_NAME', process.env.APP_NAME || 'Chalo Drive');
         params.append('TXNAMT', Math.round(amount).toString());
         params.append('CURRENCY_CODE', 'PKR');
         params.append('CUSTOMER_MOBILE_NO', normalizedPhone);
         params.append('CUSTOMER_EMAIL_ADDRESS', 'customer@chalo.app');
         params.append('BASKET_ID', basketId);
 
-        // Advanced Discovery Fields
-        params.append('TRAN_TYPE', '0'); // Standard Purchase
-        params.append('RECURRING_TXN', '0');
+        // ENVIRONMENT DETECTION: Dynamic Endpoint routing based on Server Config
+        const endpoint = (RAPID_ENV === 'LIVE' || RAPID_ENV === 'PRODUCTION')
+            ? '/rapid/process-transaction'
+            : '/sandbox/process-transaction';
+
+        // Set authoritative URLs from environment variables
+        const successUrl = process.env.RAPID_SUCCESS_URL || `https://${req.get('host')}/payments/success?uid=${userId}&amt=${amount}&bid=${basketId}`;
+        const failureUrl = process.env.RAPID_FAILURE_URL || `https://${req.get('host')}/payments/failure`;
+
+        params.append('SUCCESS_URL', successUrl);
+        params.append('FAILURE_URL', failureUrl);
         params.append('VERSION', 'MY_VER_1.0');
         params.append('PROCCODE', '0');
 
-        // --- SCALE FIX: Rapid doesn't append params to return URLs in LIVE ---
-        // We must include the UID and Amount in the success URL itself.
-        const protocol = req.headers['x-forwarded-proto'] || 'https';
-        const host = req.get('host');
-        const internalSuccessUrl = `${protocol}://${host}/payments/success?uid=${userId}&amt=${amount}&bid=${basketId}`;
-        const internalFailureUrl = `${protocol}://${host}/payments/failure`;
-
-        params.append('SUCCESS_URL', internalSuccessUrl);
-        params.append('FAILURE_URL', internalFailureUrl);
-
-        const endpoint = (RAPID_ENV === 'LIVE') ? '/rapid/process-transaction' : '/sandbox/process-transaction';
+        console.log(`💳 Payment Trigger: ${RAPID_ENV} mode via ${BASE_URL}${endpoint}`);
 
         console.log(`🚀 Initiating Redirect Checkout: ${BASE_URL}${endpoint}`);
 
