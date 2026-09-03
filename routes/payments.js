@@ -4,17 +4,16 @@ const axios = require('axios');
 const crypto = require('crypto');
 const admin = require('firebase-admin');
 
-// Detect Environment
+// Detect Environment and Base URL
 const RAPID_ENV = (process.env.RAPID_ENVIRONMENT || 'SANDBOX').toUpperCase();
+const BASE_URL = process.env.RAPID_API_BASE_URL || "https://secure.rapid-gateway.com";
 
-// Credentials - Distinguishing between OAuth Client ID and Numeric Merchant ID
-const RAPID_CLIENT_ID = process.env.RAPID_CLIENT_ID || process.env.MERCHANT_ID || (RAPID_ENV === 'SANDBOX' ? 'client' : null);
-const RAPID_CLIENT_SECRET = process.env.RAPID_CLIENT_SECRET || process.env.CLIENT_SECRET || (RAPID_ENV === 'SANDBOX' ? 'secret' : null);
-const RAPID_MERCHANT_ID = process.env.RAPID_MERCHANT_ID || process.env.MERCHANT_ID || (RAPID_ENV === 'SANDBOX' ? '920' : null);
+// Credentials mapping from Railway variables
+const RAPID_CLIENT_ID = process.env.RAPID_MERCHANT_ID || (RAPID_ENV === 'SANDBOX' ? 'client' : null);
+const RAPID_CLIENT_SECRET = process.env.RAPID_CLIENT_SECRET || (RAPID_ENV === 'SANDBOX' ? 'secret' : null);
+const RAPID_MERCHANT_ID = process.env.RAPID_MERCHANT_ID || (RAPID_ENV === 'SANDBOX' ? '920' : null);
 
-console.log(`💳 Payment System: Mode=${RAPID_ENV}, MID=${RAPID_MERCHANT_ID}, CID=${RAPID_CLIENT_ID}`);
-
-const BASE_URL = "https://secure.rapid-gateway.com";
+console.log(`💳 Payment System: Mode=${RAPID_ENV}, Base=${BASE_URL}, MID=${RAPID_MERCHANT_ID}`);
 
 /** ── Helper: Update User Balance in RTDB ─────────────────── */
 async function updateBalance(userId, amount, basketId) {
