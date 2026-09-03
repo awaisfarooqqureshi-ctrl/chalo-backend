@@ -113,23 +113,26 @@ router.get('/transactions/:userId', async (req, res) => {
 // 10. Get Accounting Summary (Daily/Monthly)
 router.get('/summary/:userId', async (req, res) => {
     try {
-        const cleanId = req.params.userId.replace(/\+/g, '').trim();
+        const rawId = req.params.userId;
+        const cleanId = rawId.replace(/\+/g, '').replace(/^0/, '').trim();
+        const searchIds = [rawId, cleanId, `+${cleanId}`, `0${cleanId}`, `92${cleanId}`];
+
         const now = new Date();
         const startOfDay = new Date(now.setHours(0,0,0,0)).getTime();
         const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
 
         const dailyIncome = await Transaction.aggregate([
-            { $match: { userId: cleanId, category: 'RIDE_INCOME', timestamp: { $gte: startOfDay } } },
+            { $match: { userId: { $in: searchIds }, category: 'RIDE_INCOME', timestamp: { $gte: startOfDay } } },
             { $group: { _id: null, total: { $sum: "$amount" } } }
         ]);
 
         const monthlyIncome = await Transaction.aggregate([
-            { $match: { userId: cleanId, category: 'RIDE_INCOME', timestamp: { $gte: startOfMonth } } },
+            { $match: { userId: { $in: searchIds }, category: 'RIDE_INCOME', timestamp: { $gte: startOfMonth } } },
             { $group: { _id: null, total: { $sum: "$amount" } } }
         ]);
 
         const totalTopups = await Transaction.aggregate([
-            { $match: { userId: cleanId, category: 'TOPUP' } },
+            { $match: { userId: { $in: searchIds }, category: 'TOPUP' } },
             { $group: { _id: null, total: { $sum: "$amount" } } }
         ]);
 

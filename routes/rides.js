@@ -278,19 +278,20 @@ router.post('/update-payment', async (req, res) => {
 // 6. Get History (Scale-optimized MongoDB fetch)
 router.get('/history/:userId', async (req, res) => {
     try {
-        const cleanId = req.params.userId.replace(/\+/g, '').trim();
-        console.log(`📜 Fetching history for user: ${cleanId}`);
+        const rawId = req.params.userId;
+        const cleanId = rawId.replace(/\+/g, '').replace(/^0/, '').trim();
+        console.log(`📜 Fetching history for user: Raw=${rawId}, Clean=${cleanId}`);
 
         const rides = await MongoRide.find({
             $or: [
-                { passengerId: cleanId },
-                { driverId: cleanId },
-                { "passengerId": `+${cleanId}` }, // Support legacy + prefix
-                { "driverId": `+${cleanId}` }
+                { passengerId: new RegExp(cleanId, 'i') },
+                { driverId: new RegExp(cleanId, 'i') },
+                { passengerId: rawId },
+                { driverId: rawId }
             ]
         }).sort({ timestamp: -1 }).limit(30);
 
-        console.log(`✅ Found ${rides.length} rides in MongoDB for ${cleanId}`);
+        console.log(`✅ Found ${rides.length} rides in MongoDB for ${rawId}`);
         res.json(rides);
     } catch (e) {
         console.error("❌ History Fetch Error:", e.message);
