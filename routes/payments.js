@@ -6,25 +6,39 @@ const admin = require('firebase-admin');
 
 // Detect Environment and Base URL
 const RAPID_ENV = (process.env.RAPID_ENVIRONMENT || 'SANDBOX').toUpperCase();
-const BASE_URL = process.env.RAPID_API_BASE_URL || "https://secure.rapid-gateway.com";
+const BASE_URL = (process.env.RAPID_API_BASE_URL || "https://secure.rapid-gateway.com").replace(/\/$/, "");
 
-// Credentials mapping from Railway variables
-const RAPID_CLIENT_ID = process.env.RAPID_MERCHANT_ID || (RAPID_ENV === 'SANDBOX' ? 'client' : null);
-const RAPID_CLIENT_SECRET = process.env.RAPID_CLIENT_SECRET || (RAPID_ENV === 'SANDBOX' ? 'secret' : null);
-const RAPID_MERCHANT_ID = process.env.RAPID_MERCHANT_ID || (RAPID_ENV === 'SANDBOX' ? '920' : null);
+// Credentials Mapping Logic
+let RAPID_CLIENT_ID, RAPID_CLIENT_SECRET, RAPID_MERCHANT_ID;
 
-console.log(`💳 Payment System: Mode=${RAPID_ENV}, Base=${BASE_URL}, MID=${RAPID_MERCHANT_ID}`);
+if (RAPID_ENV === 'SANDBOX' || RAPID_ENV === 'TEST') {
+    // Standard Rapid Sandbox Credentials
+    RAPID_CLIENT_ID = "client";
+    RAPID_CLIENT_SECRET = "secret";
+    RAPID_MERCHANT_ID = process.env.RAPID_MERCHANT_ID || "920";
+} else {
+    // Production Credentials from Railway
+    RAPID_CLIENT_ID = process.env.RAPID_CLIENT_ID || process.env.RAPID_MERCHANT_ID;
+    RAPID_CLIENT_SECRET = process.env.RAPID_CLIENT_SECRET;
+    RAPID_MERCHANT_ID = process.env.RAPID_MERCHANT_ID;
+}
+
+console.log(`💳 Payment System Initialized:`);
+console.log(`   Mode: ${RAPID_ENV}`);
+console.log(`   Base: ${BASE_URL}`);
+console.log(`   MID:  ${RAPID_MERCHANT_ID}`);
+console.log(`   🔑 OAuth Attempt: ID=${RAPID_CLIENT_ID?.substring(0,2)}***, Secret=${RAPID_CLIENT_SECRET?.substring(0,2)}***`);
 
 /** ── Helper: Update User Balance in RTDB ─────────────────── */
 async function updateBalance(userId, amount, basketId) {
     if (!userId || !amount) return;
     try {
         const db = admin.database();
-        // Clean user ID if it has special characters
-        const cleanId = userId.toString().replace(/\D/g, '').trim();
+        // Clean user ID: Keep only digits/letters
+        const cleanId = userId.toString().replace(/[.$#[\]]/g, '').trim();
         const userRef = db.ref(`users/${cleanId}`);
 
-        console.log(`🏦 Attempting to update balance for user: ${cleanId} with amount: ${amount}`);
+        console.log(`🏦 Crediting Wallet: User=${cleanId}, Amount=${amount}`);
 
         // 1. Atomic Balance Update
         await userRef.child('walletBalance').transaction((current) => {
@@ -35,7 +49,7 @@ async function updateBalance(userId, amount, basketId) {
         const transId = userRef.child('transactions').push().key;
         await userRef.child(`transactions/${transId}`).set({
             id: transId,
-            title: "Wallet Top-up",
+            title: "Wallet Recharge",
             amount: parseFloat(amount),
             type: "CREDIT",
             timestamp: Date.now(),
@@ -43,7 +57,7 @@ async function updateBalance(userId, amount, basketId) {
             reference: basketId
         });
 
-        console.log(`✅ Wallet Updated for ${cleanId}: +${amount}`);
+        console.log(`✅ Success: User ${cleanId} balance updated.`);
     } catch (e) {
         console.error("❌ Balance Update Failed:", e.message);
     }
