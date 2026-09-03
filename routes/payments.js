@@ -8,9 +8,11 @@ const admin = require('firebase-admin');
 const RAPID_ENV = (process.env.RAPID_ENVIRONMENT || 'SANDBOX').toUpperCase();
 
 // Credentials - Distinguishing between OAuth Client ID and Numeric Merchant ID
-const RAPID_CLIENT_ID = process.env.RAPID_CLIENT_ID || (RAPID_ENV === 'SANDBOX' ? 'client' : null);
-const RAPID_CLIENT_SECRET = process.env.RAPID_CLIENT_SECRET || (RAPID_ENV === 'SANDBOX' ? 'secret' : null);
-const RAPID_MERCHANT_ID = process.env.RAPID_MERCHANT_ID || (RAPID_ENV === 'SANDBOX' ? '920' : null);
+const RAPID_CLIENT_ID = process.env.RAPID_CLIENT_ID || process.env.MERCHANT_ID || (RAPID_ENV === 'SANDBOX' ? 'client' : null);
+const RAPID_CLIENT_SECRET = process.env.RAPID_CLIENT_SECRET || process.env.CLIENT_SECRET || (RAPID_ENV === 'SANDBOX' ? 'secret' : null);
+const RAPID_MERCHANT_ID = process.env.RAPID_MERCHANT_ID || process.env.MERCHANT_ID || (RAPID_ENV === 'SANDBOX' ? '920' : null);
+
+console.log(`💳 Payment System: Mode=${RAPID_ENV}, MID=${RAPID_MERCHANT_ID}, CID=${RAPID_CLIENT_ID}`);
 
 const BASE_URL = "https://secure.rapid-gateway.com";
 
