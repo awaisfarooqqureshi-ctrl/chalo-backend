@@ -142,14 +142,16 @@ router.post('/update-status', async (req, res) => {
 
                 // --- SCALE OPTIMIZATION: Archive to MongoDB (Cold Storage) ---
                 try {
+                    console.log(`📦 Attempting to archive ride ${rideId} to MongoDB...`);
                     const mongoRide = new MongoRide({
                         ...finalRideData,
-                        offers: Object.values(finalRideData.offers || {}) // Normalize map to array for history storage
+                        id: rideId, // Explicitly set ID
+                        offers: Object.values(finalRideData.offers || {})
                     });
-                    await mongoRide.save();
-                    console.log(`📦 Ride ${rideId} archived to Cold Storage (MongoDB)`);
+                    const saved = await mongoRide.save();
+                    console.log(`✅ Ride ${rideId} archived successfully to MongoDB Atlas.`);
                 } catch (mongoErr) {
-                    console.error("❌ MongoDB Archive Failed:", mongoErr.message);
+                    console.error("❌ MongoDB Archive CRITICAL Error:", mongoErr.message);
                 }
 
                 // Save to Global History Node (RTDB - keep temporary for sync)
