@@ -7,9 +7,16 @@ const Transaction = require('../models/Transaction');
 // Helper: Same search IDs for all routes to ensure robust lookup
 function getSearchIds(userId) {
     if (!userId) return [];
-    const rawId = userId.toString();
+    const rawId = userId.toString().trim();
     const cleanId = rawId.replace(/\+/g, '').replace(/^0/, '').replace(/^92/, '').trim();
-    return [rawId, cleanId, `0${cleanId}`, `92${cleanId}`, `+92${cleanId}`, `+${cleanId}`];
+    return [
+        rawId,
+        cleanId,
+        `0${cleanId}`,
+        `92${cleanId}`,
+        `+92${cleanId}`,
+        `+${cleanId}`
+    ];
 }
 
 // 1. Request Ride (Active in RTDB)
@@ -34,6 +41,8 @@ router.post('/request', async (req, res) => {
 router.post('/update-status', async (req, res) => {
     try {
         const { rideId, status } = req.body;
+        console.log(`🔄 Status Update Attempt: Ride=${rideId}, NewStatus=${status}`);
+
         const db = admin.database();
         const rideRef = db.ref(`active_rides/${rideId}`);
         await rideRef.update({ status });
@@ -75,20 +84,41 @@ router.post('/update-status', async (req, res) => {
 
                 // B. ARCHIVE: Save Ride to MongoDB
                 try {
-                    const mongoData = { ...finalRideData, id: rideId, status: 'COMPLETED', paymentStatus: 'PAID', offers: Object.values(finalRideData.offers || {}) };
+                    const mongoData = {
+                        ...finalRideData,
+                        id: rideId,
+                        status: 'COMPLETED',
+                        paymentStatus: 'PAID',
+                        offers: Object.values(finalRideData.offers || {})
+                    };
+
+                    // Critical mapping for required fields
                     if (mongoData.pickupLng && !mongoData.pickupLon) mongoData.pickupLon = mongoData.pickupLng;
                     if (mongoData.destinationLng && !mongoData.destinationLon) mongoData.destinationLon = mongoData.destinationLng;
-                    await new MongoRide(mongoData).save();
+
+                    const savedRide = new MongoRide(mongoData);
+                    await savedRide.save();
                     console.log(`✅ Ride ${rideId} archived to MongoDB`);
+
+                    // Cleanup RTDB
                     await rideRef.remove();
-                } catch (mongoErr) { console.error("❌ MongoDB Archive Error:", mongoErr.message); }
+                } catch (mongoErr) {
+                    console.error("❌ MongoDB Ride Archive CRITICAL Error:", mongoErr.message);
+                    if (mongoErr.errors) console.error("Validation Details:", JSON.stringify(mongoErr.errors));
+                }
             }
         } else if (['CANCELLED', 'RIDE_CANCELLED'].includes(status)) {
             const snapshot = await rideRef.get();
             if (snapshot.exists()) {
                 const data = snapshot.val();
                 try {
-                    await new MongoRide({ ...data, id: rideId, status: 'CANCELLED', offers: Object.values(data.offers || {}) }).save();
+                    await new MongoRide({
+                        ...data,
+                        id: rideId,
+                        status: 'CANCELLED',
+                        offers: Object.values(data.offers || {})
+                    }).save();
+                    console.log(`📦 Cancelled ride ${rideId} archived to MongoDB`);
                     await rideRef.remove();
                 } catch (e) { console.error("❌ Cancel Archive Error:", e.message); }
             }
@@ -97,7 +127,7 @@ router.post('/update-status', async (req, res) => {
         if (io) io.emit(`ride_status_updated_${rideId}`, { status });
         res.json({ success: true });
     } catch (e) {
-        console.error("❌ Status Update Error:", e.message);
+        console.error("❌ Status Update Route Error:", e.message);
         res.status(500).send(e.message);
     }
 });
@@ -146,7 +176,7 @@ router.post('/accept-bid', async (req, res) => {
 
         // 2. Save Commission Debit to MongoDB (MANDATORY LOG)
         try {
-            const commissionLog = new Transaction({
+            await new Transaction({
                 userId: driverId,
                 title: "Ride Commission",
                 amount: parseFloat(commissionAmount),
@@ -155,8 +185,7 @@ router.post('/accept-bid', async (req, res) => {
                 status: "COMPLETED",
                 reference: rideId,
                 timestamp: Date.now()
-            });
-            await commissionLog.save();
+            }).save();
             console.log(`📉 Commission of Rs.${commissionAmount} debited and logged in MongoDB.`);
         } catch (tErr) {
             console.error("❌ MongoDB Commission Log Failed:", tErr.message);
@@ -198,12 +227,12 @@ router.get('/history/:userId', async (req, res) => {
                 { passengerId: { $in: searchIds } },
                 { driverId: { $in: searchIds } }
             ]
-        }).sort({ timestamp: -1 }).limit(30);
+        }).sort({ timestamp: -1 }).limit(40);
 
-        console.log(`✅ Found ${rides.length} rides in history.`);
+        console.log(`✅ Found ${rides.length} rides in history for ${req.params.userId}`);
         res.json(rides);
     } catch (e) {
-        console.error("❌ History Fetch Error:", e.message);
+        console.error("❌ History Fetch Route Error:", e.message);
         res.status(500).send(e.message);
     }
 });
