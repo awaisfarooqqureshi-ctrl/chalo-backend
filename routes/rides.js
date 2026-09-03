@@ -69,6 +69,22 @@ router.post('/update-status', async (req, res) => {
                         });
                         console.log(`💰 Earnings Updated for Driver ${driverId}: +Rs.${fare}`);
 
+                        // --- SCALE OPTIMIZATION: SAVE RIDE INCOME TRANSACTION TO MONGODB ---
+                        try {
+                            await new Transaction({
+                                userId: driverId,
+                                title: "Ride Income",
+                                amount: parseFloat(fare),
+                                type: "CREDIT",
+                                status: "COMPLETED",
+                                reference: rideId,
+                                timestamp: Date.now()
+                            }).save();
+                            console.log(`✅ Ride income transaction archived to MongoDB for ${driverId}`);
+                        } catch (tErr) {
+                            console.error("❌ Ride Transaction Archive Failed:", tErr.message);
+                        }
+
                         // --- RESTORED: BONUS PROGRESS LOGIC ---
                         const vehicleType = finalRideData.vehicleType || "Car";
                         const vehicleGroup = ["bike", "rickshaw", "riksha"].includes(vehicleType.toLowerCase()) ? "BIKE_RIKSHAW" : "CAR";
