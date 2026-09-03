@@ -5,8 +5,9 @@ const TransactionSchema = new mongoose.Schema({
     title: { type: String, required: true },
     amount: { type: Number, required: true },
     type: { type: String, enum: ['CREDIT', 'DEBIT'], required: true },
+    category: { type: String, enum: ['TOPUP', 'RIDE_INCOME', 'COMMISSION', 'BONUS', 'WITHDRAWAL'], required: true, index: true },
     status: { type: String, default: 'COMPLETED' },
-    reference: { type: String, index: true }, // Ride ID, Payment Ref, etc. (Unique per attempt)
+    reference: { type: String, index: true }, // Ride ID or Payment ID
     timestamp: { type: Number, default: () => Date.now() }
 }, { timestamps: true });
 

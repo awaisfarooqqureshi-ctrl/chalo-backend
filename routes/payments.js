@@ -60,6 +60,7 @@ async function updateBalance(userId, amount, basketId) {
                 title: "Wallet Top-up",
                 amount: parseFloat(amount),
                 type: "CREDIT",
+                category: "TOPUP",
                 status: "COMPLETED",
                 reference: basketId,
                 timestamp: Date.now()

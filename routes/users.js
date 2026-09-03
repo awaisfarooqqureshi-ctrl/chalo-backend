@@ -99,10 +99,45 @@ router.post('/register-driver', async (req, res) => {
 router.get('/transactions/:userId', async (req, res) => {
     try {
         const cleanId = req.params.userId.replace(/\+/g, '').trim();
-        const transactions = await Transaction.find({ userId: cleanId })
-            .sort({ timestamp: -1 })
-            .limit(15);
+        const transactions = await Transaction.find({
+            userId: { $in: [cleanId, `+${cleanId}`] }
+        })
+        .sort({ timestamp: -1 })
+        .limit(15);
         res.json(transactions);
+    } catch (e) {
+        res.status(500).send(e.message);
+    }
+});
+
+// 10. Get Accounting Summary (Daily/Monthly)
+router.get('/summary/:userId', async (req, res) => {
+    try {
+        const cleanId = req.params.userId.replace(/\+/g, '').trim();
+        const now = new Date();
+        const startOfDay = new Date(now.setHours(0,0,0,0)).getTime();
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+
+        const dailyIncome = await Transaction.aggregate([
+            { $match: { userId: cleanId, category: 'RIDE_INCOME', timestamp: { $gte: startOfDay } } },
+            { $group: { _id: null, total: { $sum: "$amount" } } }
+        ]);
+
+        const monthlyIncome = await Transaction.aggregate([
+            { $match: { userId: cleanId, category: 'RIDE_INCOME', timestamp: { $gte: startOfMonth } } },
+            { $group: { _id: null, total: { $sum: "$amount" } } }
+        ]);
+
+        const totalTopups = await Transaction.aggregate([
+            { $match: { userId: cleanId, category: 'TOPUP' } },
+            { $group: { _id: null, total: { $sum: "$amount" } } }
+        ]);
+
+        res.json({
+            todayEarnings: dailyIncome[0]?.total || 0,
+            monthlyEarnings: monthlyIncome[0]?.total || 0,
+            totalTopups: totalTopups[0]?.total || 0
+        });
     } catch (e) {
         res.status(500).send(e.message);
     }

@@ -76,6 +76,7 @@ router.post('/update-status', async (req, res) => {
                                 title: "Ride Income",
                                 amount: parseFloat(fare),
                                 type: "CREDIT",
+                                category: "RIDE_INCOME",
                                 status: "COMPLETED",
                                 reference: rideId,
                                 timestamp: Date.now()
@@ -120,6 +121,7 @@ router.post('/update-status', async (req, res) => {
                                                 title: `Bonus: ${scheme.title}`,
                                                 amount: scheme.reward,
                                                 type: "CREDIT",
+                                                category: "BONUS",
                                                 status: "COMPLETED",
                                                 timestamp: Date.now()
                                             }).save();
@@ -193,7 +195,7 @@ router.post('/bid', async (req, res) => {
     } catch (e) { res.status(500).send(e.message); }
 });
 
-// 4. Accept Bid
+// 4. Accept Bid: Match Driver and Passenger + Deduct Commission
 router.post('/accept-bid', async (req, res) => {
     try {
         const { rideId, offerId, driverId } = req.body;
@@ -217,10 +219,28 @@ router.post('/accept-bid', async (req, res) => {
 
         const commissionAmount = (acceptedOffer.bidFare * commissionRate) / 100;
 
+        // A. DEDUCT COMMISSION FROM WALLET
         await driverRef.update({
             walletBalance: (driver.walletBalance || 0) - commissionAmount,
             driverStatus: ride.serviceType === 'CARPOOL' ? 'ON_CARPOOL_PICKUP' : 'ON_CITY_RIDE'
         });
+
+        // B. RECORD COMMISSION DEBIT IN MONGODB (Accounting Logic)
+        try {
+            await new Transaction({
+                userId: driverId,
+                title: "Ride Commission",
+                amount: parseFloat(commissionAmount),
+                type: "DEBIT",
+                category: "COMMISSION",
+                status: "COMPLETED",
+                reference: rideId,
+                timestamp: Date.now()
+            }).save();
+            console.log(`📉 Commission of Rs.${commissionAmount} debited for ride ${rideId}`);
+        } catch (tErr) {
+            console.error("❌ Commission Record Failed:", tErr.message);
+        }
 
         const rideUpdates = {
             status: 'ACCEPTED',
