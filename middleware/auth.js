@@ -5,6 +5,15 @@ const CHALO_APP_KEY = process.env.CHALO_APP_KEY || 'chalo_app_v1_secret';
 
 // 1. Verify Global App Key (STRICT PRODUCTION MODE)
 const verifyAppKey = (req, res, next) => {
+    // Exempt Browser-based Payment Pages from App Key check
+    const path = req.originalUrl || req.url || "";
+    if (path.includes('/payments/checkout') ||
+        path.includes('/payments/success') ||
+        path.includes('/payments/failure') ||
+        path.includes('/payments/complete')) {
+        return next();
+    }
+
     const appKey = req.headers['x-chalo-app-key'];
     if (!appKey || appKey !== CHALO_APP_KEY) {
         return res.status(403).json({ success: false, message: "Forbidden: Invalid App Key" });
@@ -14,6 +23,15 @@ const verifyAppKey = (req, res, next) => {
 
 // 2. Verify User Token (JWT)
 const verifyToken = (req, res, next) => {
+    // Exempt Browser-based Payment Pages from Token check
+    const path = req.originalUrl || req.url || "";
+    if (path.includes('/payments/checkout') ||
+        path.includes('/payments/success') ||
+        path.includes('/payments/failure') ||
+        path.includes('/payments/complete')) {
+        return next();
+    }
+
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
         return res.status(401).json({ success: false, message: "Unauthorized: No token provided" });

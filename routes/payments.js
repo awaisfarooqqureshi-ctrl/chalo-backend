@@ -106,7 +106,7 @@ router.post('/initiate', async (req, res) => {
         // Return details for our hosted checkout page
         res.json({
             success: true,
-            checkout_url: `https://${req.get('host')}/payments/checkout?sid=${sessionId}&secret=${clientSecret}&pk=${publishableKey}&amt=${amount}`
+            checkout_url: `https://${req.get('host')}/payments/checkout?sid=${sessionId}&secret=${clientSecret}&pk=${publishableKey}&amt=${amount}&bid=${basketId}`
         });
 
     } catch (error) {
@@ -117,7 +117,7 @@ router.post('/initiate', async (req, res) => {
 
 /** ── NEW: Simple Hosted Checkout Page (Step 3: Mount SDK) ─── */
 router.get('/checkout', (req, res) => {
-    const { sid, secret, pk, amt } = req.query;
+    const { sid, secret, pk, amt, bid } = req.query;
 
     res.send(`
         <!DOCTYPE html>
@@ -145,7 +145,7 @@ router.get('/checkout', (req, res) => {
                         currency: 'PKR',
                         merchantName: 'Chalo Drive',
                         onSuccess: ({ sessionId }) => {
-                            window.location.href = "/payments/success?status=success&basket_id=CHECKOUT-" + sessionId;
+                            window.location.href = "/payments/success?status=success&basket_id=${bid}&amount=${amt}";
                         },
                         onPending: ({ sessionId }) => {
                             alert("Payment is pending. Please wait.");
