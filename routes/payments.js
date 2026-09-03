@@ -62,65 +62,106 @@ async function getAccessToken() {
     }
 }
 
+/** ── NEW: Embedded Checkout Flow (Step 2: Create Session) ─── */
 router.post('/initiate', async (req, res) => {
     try {
-        console.log("💰 Payment Initiation Request Body:", JSON.stringify(req.body));
-
-        const paymentData = req.body.paymentIntent || req.body;
-        // SCALE FIX: Supporting both nested and flat structures
-        const amount = paymentData.amount;
-        const userId = paymentData.userId || paymentData.customer?.userId;
-        const phone = paymentData.phone || paymentData.customer?.phone;
+        const { amount, userId, phone } = req.body;
 
         if (!amount || !userId || !phone) {
-            console.error("❌ Missing Payment Data:", { amount, userId, phone });
             return res.status(400).json({ success: false, message: "Missing amount, userId or phone" });
         }
 
         const token = await getAccessToken();
 
+        // 1. Prepare Customer Info
         let normalizedPhone = phone.toString().trim().replace(/\s+/g, '');
         if (normalizedPhone.startsWith('+92')) normalizedPhone = '0' + normalizedPhone.slice(3);
         else if (normalizedPhone.startsWith('92')) normalizedPhone = '0' + normalizedPhone.slice(2);
         else if (!normalizedPhone.startsWith('0')) normalizedPhone = '0' + normalizedPhone;
 
-        // Format: SBX-UserID-Timestamp
-        const basketId = `SBX-${userId}-${Date.now()}`;
+        const basketId = `CHALO-${userId}-${Date.now()}`;
 
-        const params = new URLSearchParams();
-        params.append('MERCHANT_ID', (MERCHANT_ID === 'client') ? '920' : MERCHANT_ID);
-        params.append('MERCHANT_NAME', 'Chalo Drive');
-        params.append('TXNAMT', Math.round(amount).toString());
-        params.append('CURRENCY_CODE', 'PKR');
-        params.append('CUSTOMER_MOBILE_NO', normalizedPhone);
-        params.append('CUSTOMER_EMAIL_ADDRESS', 'customer@chalo.app');
-        params.append('BASKET_ID', basketId);
-        params.append('SUCCESS_URL', `https://chalo-backend-production-0bd5.up.railway.app/payments/success`);
-        params.append('FAILURE_URL', `https://chalo-backend-production-0bd5.up.railway.app/payments/failure`);
-        params.append('CHECKOUT_URL', `https://chalo-backend-production-0bd5.up.railway.app/payments/complete`);
-        params.append('VERSION', 'MY_VER_1.0');
-        params.append('PROCCODE', '0');
+        // 2. Request Checkout Session from Rapid
+        const sessionPayload = {
+            merchantId: (MERCHANT_ID === 'client' || !MERCHANT_ID) ? 920 : parseInt(MERCHANT_ID), // 920 is Rapid's demo MID
+            amount: parseFloat(amount),
+            currency: 'PKR',
+            basketId: basketId,
+            customerEmail: 'customer@chalo.app',
+            customerMobile: normalizedPhone
+        };
 
-        const endpoint = (RAPID_ENV === 'LIVE') ? '/rapid/process-transaction' : '/sandbox/process-transaction';
+        console.log("🚀 Creating Rapid Checkout Session:", sessionPayload);
 
-        let checkoutUrl = null;
-        try {
-            const response = await axios.post(`${BASE_URL}${endpoint}`, params.toString(), {
-                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
-                maxRedirects: 0,
-                validateStatus: (status) => status >= 200 && status < 400
-            });
-            checkoutUrl = response.headers.location || response.headers['Location'];
-        } catch (err) {
-            checkoutUrl = err.response?.headers?.location || err.response?.headers?.['Location'];
-        }
+        const response = await axios.post(`${BASE_URL}/v1/checkout-sessions`, sessionPayload, {
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json',
+                'X-Environment': (RAPID_ENV === 'LIVE') ? 'LIVE' : 'TEST'
+            }
+        });
 
-        if (!checkoutUrl) throw new Error("No Redirect URL captured");
-        res.json({ success: true, checkout_url: checkoutUrl });
+        const { sessionId, clientSecret, publishableKey } = response.data;
+
+        // Return details for our hosted checkout page
+        res.json({
+            success: true,
+            checkout_url: `https://${req.get('host')}/payments/checkout?sid=${sessionId}&secret=${clientSecret}&pk=${publishableKey}&amt=${amount}`
+        });
 
     } catch (error) {
+        console.error("❌ Rapid Session Error:", error.response?.data || error.message);
         res.status(500).json({ success: false, message: error.message });
     }
+});
+
+/** ── NEW: Simple Hosted Checkout Page (Step 3: Mount SDK) ─── */
+router.get('/checkout', (req, res) => {
+    const { sid, secret, pk, amt } = req.query;
+
+    res.send(`
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+            <title>Chalo Payment</title>
+            <script src="https://secure.rapid-gateway.com/sdk/v1/rapidpay.js"></script>
+            <style>
+                body { margin: 0; padding: 20px; font-family: sans-serif; background: #fff; }
+                #rp-checkout { width: 100%; min-height: 450px; }
+                .loader { text-align: center; padding: 50px; }
+            </style>
+        </head>
+        <body>
+            <div id="rp-checkout">
+                <div class="loader">Loading secure payment...</div>
+            </div>
+            <script>
+                try {
+                    const rp = RapidPay("${pk}");
+                    const checkout = rp.mountCheckout('#rp-checkout', {
+                        clientSecret: "${secret}",
+                        amount: ${amt},
+                        currency: 'PKR',
+                        merchantName: 'Chalo Drive',
+                        onSuccess: ({ sessionId }) => {
+                            window.location.href = "/payments/success?status=success&basket_id=CHECKOUT-" + sessionId;
+                        },
+                        onPending: ({ sessionId }) => {
+                            alert("Payment is pending. Please wait.");
+                        },
+                        onError: (e) => {
+                            console.error(e);
+                            alert("Payment Error: " + (e.message || "Unknown error"));
+                        },
+                    });
+                } catch (err) {
+                    document.getElementById('rp-checkout').innerHTML = "<h1>Error initializing gateway</h1>";
+                }
+            </script>
+        </body>
+        </html>
+    `);
 });
 
 // Authoritative Redirect Success Page
