@@ -29,27 +29,41 @@ console.log(`   Base: ${BASE_URL}`);
 console.log(`   MID:  ${RAPID_MERCHANT_ID}`);
 console.log(`   🔑 OAuth Attempt: ID=${RAPID_CLIENT_ID?.substring(0,2)}***, Secret=${RAPID_CLIENT_SECRET?.substring(0,2)}***`);
 
-/** ── Helper: Update User Balance in RTDB ─────────────────── */
+/** ── Helper: Update User Balance in RTDB (Secure & Idempotent) ───── */
 async function updateBalance(userId, amount, basketId) {
-    if (!userId || !amount) return;
+    if (!userId || !amount || !basketId) return;
     try {
         const db = admin.database();
-        // Clean user ID: Keep only digits/letters
         const cleanId = userId.toString().replace(/[.$#[\]]/g, '').trim();
+
+        // 1. Check if this transaction was already processed (Prevention of double-crediting)
+        const processedRef = db.ref(`processed_payments/${basketId}`);
+        const alreadyProcessed = await processedRef.get();
+        if (alreadyProcessed.exists()) {
+            console.log(`⚠️ Payment ${basketId} already processed. Skipping.`);
+            return;
+        }
+
         const userRef = db.ref(`users/${cleanId}`);
+        console.log(`🏦 Securely crediting wallet: User=${cleanId}, Amount=${amount}, ID=${basketId}`);
 
-        console.log(`🏦 Crediting Wallet: User=${cleanId}, Amount=${amount}`);
-
-        // 1. Atomic Balance Update
+        // 2. Atomic Balance Update
         await userRef.child('walletBalance').transaction((current) => {
             return (parseFloat(current) || 0) + parseFloat(amount);
         });
 
-        // 2. Add Transaction Log
+        // 3. Mark as processed
+        await processedRef.set({
+            userId: cleanId,
+            amount: parseFloat(amount),
+            timestamp: Date.now()
+        });
+
+        // 4. Add Transaction Log
         const transId = userRef.child('transactions').push().key;
         await userRef.child(`transactions/${transId}`).set({
             id: transId,
-            title: "Wallet Recharge",
+            title: "Wallet Top-up",
             amount: parseFloat(amount),
             type: "CREDIT",
             timestamp: Date.now(),
@@ -57,7 +71,7 @@ async function updateBalance(userId, amount, basketId) {
             reference: basketId
         });
 
-        console.log(`✅ Success: User ${cleanId} balance updated.`);
+        console.log(`✅ Success: User ${cleanId} wallet updated.`);
     } catch (e) {
         console.error("❌ Balance Update Failed:", e.message);
     }
@@ -122,9 +136,15 @@ router.post('/initiate', async (req, res) => {
         params.append('VERSION', 'MY_VER_1.0');
         params.append('PROCCODE', '0');
 
-        // Use environment variables for URLs if available, otherwise construct
-        params.append('SUCCESS_URL', process.env.RAPID_SUCCESS_URL || `https://${req.get('host')}/payments/success`);
-        params.append('FAILURE_URL', process.env.RAPID_FAILURE_URL || `https://${req.get('host')}/payments/failure`);
+        // --- SCALE FIX: Rapid doesn't append params to return URLs in LIVE ---
+        // We must include the UID and Amount in the success URL itself.
+        const protocol = req.headers['x-forwarded-proto'] || 'https';
+        const host = req.get('host');
+        const internalSuccessUrl = `${protocol}://${host}/payments/success?uid=${userId}&amt=${amount}&bid=${basketId}`;
+        const internalFailureUrl = `${protocol}://${host}/payments/failure`;
+
+        params.append('SUCCESS_URL', internalSuccessUrl);
+        params.append('FAILURE_URL', internalFailureUrl);
 
         const endpoint = (RAPID_ENV === 'LIVE') ? '/rapid/process-transaction' : '/sandbox/process-transaction';
 
@@ -205,32 +225,59 @@ router.get('/checkout', (req, res) => {
 
 // Authoritative Redirect Success Page
 router.get('/success', async (req, res) => {
-    const { status, amount, basket_id } = req.query;
+    // Robust extraction from multiple possible sources
+    const status = req.query.status || 'success';
+    const amount = req.query.amt || req.query.amount;
+    const basketId = req.query.bid || req.query.basket_id;
+    const userId = req.query.uid;
 
-    if (status === 'success' || status === 'SUCCESS') {
-        // Extract UserID robustly from SBX-UserID-Timestamp
-        // UID could contain hyphens, so we join everything between first and last dash
-        const parts = basket_id?.split('-') || [];
-        const userId = parts.slice(1, -1).join('-');
+    console.log("🏁 Success Redirect Hit:", { status, amount, basketId, userId });
 
-        if (userId) {
-            await updateBalance(userId, amount, basket_id);
+    if (status.toLowerCase() === 'success') {
+        if (userId && amount) {
+            await updateBalance(userId, amount, basketId);
+        } else if (basketId) {
+            // Fallback: try extracting from basketId if uid/amt missing
+            const parts = basketId.split('-');
+            const extractedId = parts.slice(1, -1).join('-');
+            // Note: can't extract amount from basketId easily without extra logic
+            if (extractedId && amount) await updateBalance(extractedId, amount, basketId);
         }
     }
 
-    res.send("<div style='text-align:center;font-family:sans-serif;padding-top:50px;'><h1>✅ Payment Successful!</h1><p>Your wallet has been updated. You can close this window.</p></div>");
+    res.send(`
+        <div style='text-align:center;font-family:sans-serif;padding:50px;background:#f9f9f9;border-radius:20px;'>
+            <h1 style='color:#4CAF50;'>✅ Payment Successful!</h1>
+            <p style='font-size:18px;'>Rs. ${amount || ""} has been added to your wallet.</p>
+            <p style='color:gray;'>You can close this window now.</p>
+            <button onclick="window.close()" style="background:#FFC107; border:none; padding:10px 20px; border-radius:5px; font-weight:bold; cursor:pointer;">Close</button>
+        </div>
+    `);
 });
 
-// Webhook Callback
+// Webhook Callback (The true Source of Truth)
 router.post('/callback', async (req, res) => {
-    const { status, amount, merchantTransactionId } = req.body;
+    try {
+        console.log("📡 Webhook Received:", JSON.stringify(req.body));
 
-    if (status === 'SUCCESS' || status === 'completed') {
-        const parts = merchantTransactionId?.split('-') || [];
-        const userId = parts.slice(1, -1).join('-');
-        if (userId) await updateBalance(userId, amount, merchantTransactionId);
+        const { status, amount, merchantTransactionId, basketId } = req.body;
+        const bid = merchantTransactionId || basketId;
+
+        if (status === 'SUCCESS' || status === 'completed') {
+            const parts = bid?.split('-') || [];
+            const userId = parts.slice(1, -1).join('-');
+
+            if (userId && amount) {
+                await updateBalance(userId, amount, bid);
+            } else {
+                console.error("❌ Webhook missing data:", { userId, amount, bid });
+            }
+        }
+        res.status(200).send("OK");
+    } catch (e) {
+        console.error("❌ Webhook Error:", e.message);
+        res.status(500).send("Internal Error");
     }
-    res.status(200).send("OK");
 });
 
 router.get('/failure', (req, res) => res.send("<h1>❌ Payment Failed</h1>"));
