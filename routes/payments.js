@@ -34,33 +34,26 @@ console.log(`   🔑 OAuth Attempt: ID=${RAPID_CLIENT_ID?.substring(0,2)}***, Se
 async function updateBalance(userId, amount, basketId) {
     if (!userId || !amount || !basketId) return;
     try {
-        const db = admin.database();
         const cleanId = userId.toString().replace(/[.$#[\]]/g, '').trim();
 
-        // 1. Check if this transaction was already processed (Prevention of double-crediting)
-        const processedRef = db.ref(`processed_payments/${basketId}`);
-        const alreadyProcessed = await processedRef.get();
-        if (alreadyProcessed.exists()) {
-            console.log(`⚠️ Payment ${basketId} already processed. Skipping.`);
+        // 1. Check if this transaction was already processed in MongoDB (Idempotency)
+        // This prevents double-crediting if the success page is refreshed.
+        const alreadyProcessed = await Transaction.findOne({ reference: basketId });
+        if (alreadyProcessed) {
+            console.log(`⚠️ Payment ${basketId} already processed in MongoDB. Skipping.`);
             return;
         }
 
+        const db = admin.database();
         const userRef = db.ref(`users/${cleanId}`);
         console.log(`🏦 Securely crediting wallet: User=${cleanId}, Amount=${amount}, ID=${basketId}`);
 
-        // 2. Atomic Balance Update
+        // 2. Atomic Balance Update in RTDB (For Real-time UI)
         await userRef.child('walletBalance').transaction((current) => {
             return (parseFloat(current) || 0) + parseFloat(amount);
         });
 
-        // 3. Mark as processed
-        await processedRef.set({
-            userId: cleanId,
-            amount: parseFloat(amount),
-            timestamp: Date.now()
-        });
-
-        // 4. Add Transaction Log (Now in MongoDB)
+        // 3. Add Transaction Log to MongoDB History
         try {
             await new Transaction({
                 userId: cleanId,
@@ -71,12 +64,11 @@ async function updateBalance(userId, amount, basketId) {
                 reference: basketId,
                 timestamp: Date.now()
             }).save();
-            console.log(`📦 Transaction archived to MongoDB for ${cleanId}`);
+            console.log(`✅ Success: Transaction archived to MongoDB for ${cleanId}`);
         } catch (mongoErr) {
             console.error("❌ MongoDB Transaction Archive Failed:", mongoErr.message);
         }
 
-        console.log(`✅ Success: User ${cleanId} wallet updated.`);
     } catch (e) {
         console.error("❌ Balance Update Failed:", e.message);
     }
