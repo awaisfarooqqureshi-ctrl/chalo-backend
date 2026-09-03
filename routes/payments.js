@@ -7,10 +7,10 @@ const admin = require('firebase-admin');
 // Detect Environment
 const RAPID_ENV = (process.env.RAPID_ENVIRONMENT || 'SANDBOX').toUpperCase();
 
-// Credentials
-const MERCHANT_ID = process.env.RAPID_MERCHANT_ID || process.env.MERCHANT_ID || (RAPID_ENV === 'SANDBOX' ? 'client' : null);
-const CLIENT_SECRET = process.env.RAPID_CLIENT_SECRET || process.env.CLIENT_SECRET || (RAPID_ENV === 'SANDBOX' ? 'secret' : null);
-const WEBHOOK_SALT = process.env.RAPID_WEBHOOK_SALT || process.env.WEBHOOK_SALT;
+// Credentials - Distinguishing between OAuth Client ID and Numeric Merchant ID
+const RAPID_CLIENT_ID = process.env.RAPID_CLIENT_ID || (RAPID_ENV === 'SANDBOX' ? 'client' : null);
+const RAPID_CLIENT_SECRET = process.env.RAPID_CLIENT_SECRET || (RAPID_ENV === 'SANDBOX' ? 'secret' : null);
+const RAPID_MERCHANT_ID = process.env.RAPID_MERCHANT_ID || (RAPID_ENV === 'SANDBOX' ? '920' : null);
 
 const BASE_URL = "https://secure.rapid-gateway.com";
 
@@ -19,24 +19,30 @@ async function updateBalance(userId, amount, basketId) {
     if (!userId || !amount) return;
     try {
         const db = admin.database();
-        const userRef = db.ref(`users/${userId}`);
+        // Clean user ID if it has special characters
+        const cleanId = userId.toString().replace(/\D/g, '').trim();
+        const userRef = db.ref(`users/${cleanId}`);
+
+        console.log(`🏦 Attempting to update balance for user: ${cleanId} with amount: ${amount}`);
 
         // 1. Atomic Balance Update
-        await userRef.child('walletBalance').transaction((current) => (current || 0) + Number(amount));
+        await userRef.child('walletBalance').transaction((current) => {
+            return (parseFloat(current) || 0) + parseFloat(amount);
+        });
 
         // 2. Add Transaction Log
         const transId = userRef.child('transactions').push().key;
         await userRef.child(`transactions/${transId}`).set({
             id: transId,
             title: "Wallet Top-up",
-            amount: Number(amount),
+            amount: parseFloat(amount),
             type: "CREDIT",
             timestamp: Date.now(),
             status: "COMPLETED",
             reference: basketId
         });
 
-        console.log(`✅ Wallet Updated for ${userId}: +${amount}`);
+        console.log(`✅ Wallet Updated for ${cleanId}: +${amount}`);
     } catch (e) {
         console.error("❌ Balance Update Failed:", e.message);
     }
@@ -45,7 +51,10 @@ async function updateBalance(userId, amount, basketId) {
 /** ── Step 1: Get Access Token ────────────────────────────── */
 async function getAccessToken() {
     try {
-        const auth = Buffer.from(`${MERCHANT_ID}:${CLIENT_SECRET}`).toString('base64');
+        if (!RAPID_CLIENT_ID || !RAPID_CLIENT_SECRET) {
+            throw new Error("Missing Rapid Credentials (CLIENT_ID or SECRET)");
+        }
+        const auth = Buffer.from(`${RAPID_CLIENT_ID}:${RAPID_CLIENT_SECRET}`).toString('base64');
         const response = await axios.post(`${BASE_URL}/oauth2/token`,
             'grant_type=client_credentials',
             {
@@ -58,32 +67,41 @@ async function getAccessToken() {
         return response.data.access_token;
     } catch (error) {
         console.error('RapidGateway Token Error:', error.response?.data || error.message);
-        throw new Error('Failed to get Access Token');
+        throw new Error(`Auth Failed: ${JSON.stringify(error.response?.data || error.message)}`);
     }
 }
 
 /** ── NEW: Embedded Checkout Flow (Step 2: Create Session) ─── */
 router.post('/initiate', async (req, res) => {
     try {
-        const { amount, userId, phone } = req.body;
+        console.log("💰 Payment Request Received:", JSON.stringify(req.body));
+
+        // Supporting various body formats (Direct or nested)
+        const data = req.body.paymentIntent || req.body;
+        const amount = data.amount;
+        const userId = data.userId || data.customer?.userId;
+        const phone = data.phone || data.customer?.phone;
 
         if (!amount || !userId || !phone) {
-            return res.status(400).json({ success: false, message: "Missing amount, userId or phone" });
+            return res.status(400).json({
+                success: false,
+                message: "Invalid Request: amount, userId, and phone are required",
+                received: { amount, userId, phone }
+            });
         }
 
         const token = await getAccessToken();
 
         // 1. Prepare Customer Info
-        let normalizedPhone = phone.toString().trim().replace(/\s+/g, '');
-        if (normalizedPhone.startsWith('+92')) normalizedPhone = '0' + normalizedPhone.slice(3);
-        else if (normalizedPhone.startsWith('92')) normalizedPhone = '0' + normalizedPhone.slice(2);
-        else if (!normalizedPhone.startsWith('0')) normalizedPhone = '0' + normalizedPhone;
+        let normalizedPhone = phone.toString().trim().replace(/\D/g, '');
+        if (normalizedPhone.startsWith('92')) normalizedPhone = '0' + normalizedPhone.slice(2);
+        if (!normalizedPhone.startsWith('0')) normalizedPhone = '0' + normalizedPhone;
 
         const basketId = `CHALO-${userId}-${Date.now()}`;
 
         // 2. Request Checkout Session from Rapid
         const sessionPayload = {
-            merchantId: (MERCHANT_ID === 'client' || !MERCHANT_ID) ? 920 : parseInt(MERCHANT_ID), // 920 is Rapid's demo MID
+            merchantId: parseInt(RAPID_MERCHANT_ID),
             amount: parseFloat(amount),
             currency: 'PKR',
             basketId: basketId,
@@ -91,27 +109,45 @@ router.post('/initiate', async (req, res) => {
             customerMobile: normalizedPhone
         };
 
-        console.log("🚀 Creating Rapid Checkout Session:", sessionPayload);
+        console.log("🚀 Creating Rapid Session with Payload:", JSON.stringify(sessionPayload));
 
-        const response = await axios.post(`${BASE_URL}/v1/checkout-sessions`, sessionPayload, {
-            headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json',
-                'X-Environment': (RAPID_ENV === 'LIVE') ? 'LIVE' : 'TEST'
-            }
-        });
+        try {
+            const response = await axios.post(`${BASE_URL}/v1/checkout-sessions`, sessionPayload, {
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                    'X-Environment': (RAPID_ENV === 'LIVE') ? 'LIVE' : 'TEST'
+                }
+            });
 
-        const { sessionId, clientSecret, publishableKey } = response.data;
+            const { sessionId, clientSecret, publishableKey } = response.data;
+            console.log("✅ Rapid Session Created:", sessionId);
 
-        // Return details for our hosted checkout page
-        res.json({
-            success: true,
-            checkout_url: `https://${req.get('host')}/payments/checkout?sid=${sessionId}&secret=${clientSecret}&pk=${publishableKey}&amt=${amount}&bid=${basketId}`
-        });
+            // Construct absolute URL for the checkout page
+            const protocol = req.headers['x-forwarded-proto'] || 'https';
+            const host = req.get('host');
+            const checkoutUrl = `${protocol}://${host}/payments/checkout?sid=${sessionId}&secret=${clientSecret}&pk=${publishableKey}&amt=${amount}&bid=${basketId}`;
+
+            res.json({
+                success: true,
+                checkout_url: checkoutUrl
+            });
+        } catch (axiosError) {
+            console.error("❌ Rapid API Post Failed:", axiosError.response?.data || axiosError.message);
+            return res.status(axiosError.response?.status || 500).json({
+                success: false,
+                message: "Rapid API call failed",
+                error: axiosError.response?.data || axiosError.message
+            });
+        }
 
     } catch (error) {
-        console.error("❌ Rapid Session Error:", error.response?.data || error.message);
-        res.status(500).json({ success: false, message: error.message });
+        console.error("❌ Rapid Session Error Details:", error.response?.data || error.message);
+        res.status(500).json({
+            success: false,
+            message: "Internal Server Error during payment initiation",
+            error: error.response?.data || error.message
+        });
     }
 });
 
