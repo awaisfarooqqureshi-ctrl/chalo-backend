@@ -258,9 +258,9 @@ router.post('/update-payment', async (req, res) => {
 // 6. Get History (Scale-optimized MongoDB fetch)
 router.get('/history/:userId', async (req, res) => {
     try {
-        const { userId } = req.params;
+        const cleanId = req.params.userId.replace(/\+/g, '').trim();
         const rides = await MongoRide.find({
-            $or: [{ passengerId: userId }, { driverId: userId }]
+            $or: [{ passengerId: cleanId }, { driverId: cleanId }]
         }).sort({ timestamp: -1 }).limit(30);
         res.json(rides);
     } catch (e) { res.status(500).send(e.message); }
