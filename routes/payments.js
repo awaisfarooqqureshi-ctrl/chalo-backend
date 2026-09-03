@@ -64,17 +64,28 @@ async function getAccessToken() {
 
 router.post('/initiate', async (req, res) => {
     try {
+        console.log("💰 Payment Initiation Request Body:", JSON.stringify(req.body));
+
         const paymentData = req.body.paymentIntent || req.body;
-        const { amount, customer } = paymentData;
+        // SCALE FIX: Supporting both nested and flat structures
+        const amount = paymentData.amount;
+        const userId = paymentData.userId || paymentData.customer?.userId;
+        const phone = paymentData.phone || paymentData.customer?.phone;
+
+        if (!amount || !userId || !phone) {
+            console.error("❌ Missing Payment Data:", { amount, userId, phone });
+            return res.status(400).json({ success: false, message: "Missing amount, userId or phone" });
+        }
 
         const token = await getAccessToken();
 
-        let normalizedPhone = customer.phone.trim().replace(/\s+/g, '');
+        let normalizedPhone = phone.toString().trim().replace(/\s+/g, '');
         if (normalizedPhone.startsWith('+92')) normalizedPhone = '0' + normalizedPhone.slice(3);
         else if (normalizedPhone.startsWith('92')) normalizedPhone = '0' + normalizedPhone.slice(2);
+        else if (!normalizedPhone.startsWith('0')) normalizedPhone = '0' + normalizedPhone;
 
         // Format: SBX-UserID-Timestamp
-        const basketId = `SBX-${customer.userId}-${Date.now()}`;
+        const basketId = `SBX-${userId}-${Date.now()}`;
 
         const params = new URLSearchParams();
         params.append('MERCHANT_ID', (MERCHANT_ID === 'client') ? '920' : MERCHANT_ID);
