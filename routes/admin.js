@@ -43,11 +43,16 @@ router.post('/approve-driver', async (req, res) => {
     const { userId, status, notes } = req.body; // status: approved, rejected
     try {
         const db = admin.database();
-        await db.ref(`users/${userId}`).update({
+
+        // SCALE FIX: Consolidating notes into 'adminNote' for consistency across the app
+        const updates = {
             driverVerificationStatus: status,
-            verificationNotes: notes || ""
-        });
-        res.json({ success: true, message: `Driver status updated to ${status}` });
+            adminNote: notes || "", // Primary note field
+            verificationNotes: notes || "" // Keep for legacy compatibility
+        };
+
+        await db.ref(`users/${userId}`).update(updates);
+        res.json({ success: true, message: `Driver status updated to ${status}`, data: updates });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
