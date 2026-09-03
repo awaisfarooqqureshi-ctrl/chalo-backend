@@ -55,13 +55,4 @@ const RideSchema = new mongoose.Schema({
     lastPing: { type: Number, default: () => Date.now() }
 }, { timestamps: true });
 
-// Pre-save mapping for alternate field names
-RideSchema.pre('save', function (next) {
-    if (this.pickupLng && !this.pickupLon) this.pickupLon = this.pickupLng;
-    if (this.destinationLng && !this.destinationLon) this.destinationLon = this.destinationLng;
-    if (this.fare && !this.offeredFare) this.offeredFare = this.fare;
-    if (this.offeredFare && !this.fare) this.fare = this.offeredFare;
-    next();
-});
-
 module.exports = mongoose.model('Ride', RideSchema);

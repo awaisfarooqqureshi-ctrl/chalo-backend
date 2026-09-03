@@ -143,20 +143,31 @@ router.post('/update-status', async (req, res) => {
                 // --- SCALE OPTIMIZATION: Archive to MongoDB (Cold Storage) ---
                 try {
                     console.log(`📦 Attempting to archive ride ${rideId} to MongoDB...`);
-                    const mongoRide = new MongoRide({
+
+                    // Manual mapping to ensure compatibility and avoid middleware errors
+                    const mongoData = {
                         ...finalRideData,
-                        id: rideId, // Explicitly set ID
+                        id: rideId,
                         offers: Object.values(finalRideData.offers || {})
-                    });
-                    const saved = await mongoRide.save();
+                    };
+
+                    // Fallback for field names
+                    if (mongoData.pickupLng && !mongoData.pickupLon) mongoData.pickupLon = mongoData.pickupLng;
+                    if (mongoData.destinationLng && !mongoData.destinationLon) mongoData.destinationLon = mongoData.destinationLng;
+                    if (mongoData.fare && !mongoData.offeredFare) mongoData.offeredFare = mongoData.fare;
+                    if (mongoData.offeredFare && !mongoData.fare) mongoData.fare = mongoData.offeredFare;
+
+                    const mongoRide = new MongoRide(mongoData);
+                    await mongoRide.save();
                     console.log(`✅ Ride ${rideId} archived successfully to MongoDB Atlas.`);
                 } catch (mongoErr) {
                     console.error("❌ MongoDB Archive CRITICAL Error:", mongoErr.message);
                 }
 
-                // Save to Global History Node (RTDB - keep temporary for sync)
-                await db.ref(`history/${rideId}`).set(finalRideData);
-                // Remove from Active (RTDB)
+                // --- SCALE OPTIMIZATION: REMOVED RTDB HISTORY WRITE ---
+                // We no longer write to db.ref(`history/${rideId}`) or user_history
+
+                // Just Remove from Active (RTDB)
                 await rideRef.remove();
             }
         } else if (['CANCELLED', 'RIDE_CANCELLED'].includes(status)) {
@@ -164,15 +175,20 @@ router.post('/update-status', async (req, res) => {
             if (snapshot.exists()) {
                 const finalRideData = snapshot.val();
 
-                // Archive cancelled ride too
+                // Archive cancelled ride to MongoDB only
                 try {
-                    await new MongoRide({
+                    const mongoData = {
                         ...finalRideData,
+                        id: rideId,
                         offers: Object.values(finalRideData.offers || {})
-                    }).save();
-                } catch (e) {}
+                    };
+                    await new MongoRide(mongoData).save();
+                    console.log(`📦 Cancelled ride ${rideId} archived to MongoDB`);
+                } catch (e) {
+                    console.error("❌ MongoDB Cancel Archive Failed:", e.message);
+                }
 
-                await db.ref(`history/${rideId}`).set(finalRideData);
+                // Remove from Active (RTDB)
                 await rideRef.remove();
             }
         }
