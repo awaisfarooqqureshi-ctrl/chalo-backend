@@ -32,6 +32,10 @@ const RideSchema = new mongoose.Schema({
     status: { type: String, default: 'FINDING_DRIVER' },
     vehicleType: { type: String, default: 'Car' },
 
+    paymentStatus: { type: String, default: 'PENDING' }, // PENDING, PAID, CANCELLED
+    paymentMethod: { type: String, default: 'CASH' },   // CASH, WALLET
+    cancelReason: { type: String, default: "" },
+
     stops: { type: Array, default: [] },
     offers: { type: Array, default: [] }, // Array of DriverOffer objects
 
