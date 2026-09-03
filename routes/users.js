@@ -150,16 +150,23 @@ router.get('/summary/:userId', async (req, res) => {
 router.post('/review', async (req, res) => {
     try {
         const reviewData = req.body;
+        console.log("📝 Received review request:", JSON.stringify(reviewData));
+
         const cleanTargetId = reviewData.targetUserId.toString().replace(/\+/g, '').trim();
         const cleanReviewerId = reviewData.reviewerId.toString().replace(/\+/g, '').trim();
 
         // A. Save to MongoDB History
-        const review = new Review({
-            ...reviewData,
-            targetUserId: cleanTargetId,
-            reviewerId: cleanReviewerId
-        });
-        await review.save();
+        try {
+            const review = new Review({
+                ...reviewData,
+                targetUserId: cleanTargetId,
+                reviewerId: cleanReviewerId
+            });
+            await review.save();
+            console.log(`✅ Review saved to MongoDB for target: ${cleanTargetId}`);
+        } catch (mongoErr) {
+            console.error("❌ MongoDB Review Save Failed:", mongoErr.message);
+        }
 
         // B. Update RTDB Aggregates for Real-time Display
         const db = admin.database();
@@ -170,23 +177,29 @@ router.post('/review', async (req, res) => {
             const profile = snapshot.val();
             const isDriverReview = reviewData.role === "Passenger"; // Passenger reviewing Driver
 
+            const updates = {};
             if (isDriverReview) {
                 const oldCount = profile.driverReviewCount || 0;
                 const oldRating = profile.driverRating || 5.0;
                 const newCount = oldCount + 1;
                 const newRating = ((oldRating * oldCount) + reviewData.rating) / newCount;
-                await userRef.update({ driverReviewCount: newCount, driverRating: newRating });
+                updates.driverReviewCount = newCount;
+                updates.driverRating = newRating;
             } else {
                 const oldCount = profile.passengerReviewCount || 0;
                 const oldRating = profile.passengerRating || 5.0;
                 const newCount = oldCount + 1;
                 const newRating = ((oldRating * oldCount) + reviewData.rating) / newCount;
-                await userRef.update({ passengerReviewCount: newCount, passengerRating: newRating });
+                updates.passengerReviewCount = newCount;
+                updates.passengerRating = newRating;
             }
+            await userRef.update(updates);
+            console.log(`⭐ RTDB Ratings updated for ${cleanTargetId}`);
         }
 
         res.json({ success: true });
     } catch (e) {
+        console.error("❌ Review Route Error:", e.message);
         res.status(500).send(e.message);
     }
 });
@@ -194,12 +207,20 @@ router.post('/review', async (req, res) => {
 // 9. Get User Reviews from MongoDB
 router.get('/reviews/:userId', async (req, res) => {
     try {
-        const cleanId = req.params.userId.replace(/\+/g, '').trim();
-        const reviews = await Review.find({ targetUserId: cleanId })
+        const rawId = req.params.userId;
+        const cleanId = rawId.replace(/\+/g, '').replace(/^0/, '').replace(/^92/, '').trim();
+        const searchIds = [rawId, cleanId, `0${cleanId}`, `92${cleanId}`, `+92${cleanId}`];
+
+        console.log(`📜 Fetching reviews for user variants:`, searchIds);
+
+        const reviews = await Review.find({ targetUserId: { $in: searchIds } })
             .sort({ timestamp: -1 })
-            .limit(20);
+            .limit(25);
+
+        console.log(`✅ Found ${reviews.length} reviews for ${rawId}`);
         res.json(reviews);
     } catch (e) {
+        console.error("❌ Reviews Fetch Error:", e.message);
         res.status(500).send(e.message);
     }
 });

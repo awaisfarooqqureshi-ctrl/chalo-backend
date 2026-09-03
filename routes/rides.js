@@ -73,7 +73,7 @@ router.post('/update-status', async (req, res) => {
                         try {
                             await new Transaction({
                                 userId: driverId,
-                                title: "Ride Income",
+                                title: "Ride Income (Directly Received)",
                                 amount: parseFloat(fare),
                                 type: "CREDIT",
                                 category: "RIDE_INCOME",
@@ -81,7 +81,7 @@ router.post('/update-status', async (req, res) => {
                                 reference: rideId,
                                 timestamp: Date.now()
                             }).save();
-                            console.log(`✅ Ride income transaction archived to MongoDB for ${driverId}`);
+                            console.log(`✅ Direct income transaction archived to MongoDB for ${driverId}`);
                         } catch (tErr) {
                             console.error("❌ Ride Transaction Archive Failed:", tErr.message);
                         }
