@@ -275,23 +275,31 @@ router.post('/update-payment', async (req, res) => {
     } catch (e) { res.status(500).send(e.message); }
 });
 
-// 6. Get History (Scale-optimized MongoDB fetch)
+// 6. Get History (Scale-optimized MongoDB fetch with Multi-ID support)
 router.get('/history/:userId', async (req, res) => {
     try {
         const rawId = req.params.userId;
-        const cleanId = rawId.replace(/\+/g, '').replace(/^0/, '').trim();
-        console.log(`📜 Fetching history for user: Raw=${rawId}, Clean=${cleanId}`);
+        const cleanId = rawId.replace(/\+/g, '').replace(/^0/, '').replace(/^92/, '').trim();
+
+        // Comprehensive search for all possible ID variants
+        const searchIds = [
+            rawId,
+            cleanId,
+            `0${cleanId}`,
+            `92${cleanId}`,
+            `+92${cleanId}`
+        ];
+
+        console.log(`📜 Fetching history for user variants:`, searchIds);
 
         const rides = await MongoRide.find({
             $or: [
-                { passengerId: new RegExp(cleanId, 'i') },
-                { driverId: new RegExp(cleanId, 'i') },
-                { passengerId: rawId },
-                { driverId: rawId }
+                { passengerId: { $in: searchIds } },
+                { driverId: { $in: searchIds } }
             ]
-        }).sort({ timestamp: -1 }).limit(30);
+        }).sort({ timestamp: -1 }).limit(40);
 
-        console.log(`✅ Found ${rides.length} rides in MongoDB for ${rawId}`);
+        console.log(`✅ Found ${rides.length} rides in MongoDB.`);
         res.json(rides);
     } catch (e) {
         console.error("❌ History Fetch Error:", e.message);
