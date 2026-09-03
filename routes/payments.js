@@ -115,11 +115,16 @@ router.post('/initiate', async (req, res) => {
         params.append('CUSTOMER_MOBILE_NO', normalizedPhone);
         params.append('CUSTOMER_EMAIL_ADDRESS', 'customer@chalo.app');
         params.append('BASKET_ID', basketId);
+
+        // Advanced Discovery Fields
+        params.append('TRAN_TYPE', '0'); // Standard Purchase
+        params.append('RECURRING_TXN', '0');
+        params.append('VERSION', 'MY_VER_1.0');
+        params.append('PROCCODE', '0');
+
         // Use environment variables for URLs if available, otherwise construct
         params.append('SUCCESS_URL', process.env.RAPID_SUCCESS_URL || `https://${req.get('host')}/payments/success`);
         params.append('FAILURE_URL', process.env.RAPID_FAILURE_URL || `https://${req.get('host')}/payments/failure`);
-        params.append('VERSION', 'MY_VER_1.0');
-        params.append('PROCCODE', '0');
 
         const endpoint = (RAPID_ENV === 'LIVE') ? '/rapid/process-transaction' : '/sandbox/process-transaction';
 
