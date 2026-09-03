@@ -148,6 +148,9 @@ router.post('/update-status', async (req, res) => {
                     const mongoData = {
                         ...finalRideData,
                         id: rideId,
+                        status: 'COMPLETED',
+                        paymentStatus: 'PAID', // Mark as paid on completion
+                        paymentMethod: finalRideData.paymentMethod || 'CASH', // Carry forward or default to cash
                         offers: Object.values(finalRideData.offers || {})
                     };
 
@@ -296,7 +299,29 @@ router.post('/accept-bid', async (req, res) => {
     }
 });
 
-// 5. Get History from MongoDB (Scalable History)
+// 5. Update Payment Details in MongoDB History
+router.post('/update-payment', async (req, res) => {
+    try {
+        const { rideId, paymentStatus, paymentMethod } = req.body;
+        if (!rideId) return res.status(400).send("Ride ID required");
+
+        const updateData = {};
+        if (paymentStatus) updateData.paymentStatus = paymentStatus;
+        if (paymentMethod) updateData.paymentMethod = paymentMethod;
+
+        await MongoRide.findOneAndUpdate({ id: rideId }, updateData);
+
+        // Also update RTDB history for fallback
+        await admin.database().ref(`history/${rideId}`).update(updateData);
+
+        console.log(`💳 Payment details updated for ride ${rideId}`);
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).send(e.message);
+    }
+});
+
+// 6. Get History from MongoDB (Scalable History)
 router.get('/history/:userId', async (req, res) => {
     try {
         const { userId } = req.params;
