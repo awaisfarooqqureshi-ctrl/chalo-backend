@@ -63,13 +63,16 @@ async function updateBalance(userId, amount, basketId) {
     }
 }
 
-/** ── Step 1: Get Access Token ────────────────────────────── */
+/** ── STEP 1: Get Access Token (Standard OAuth2) ──────────────── */
 async function getAccessToken() {
     try {
-        if (!RAPID_CLIENT_ID || !RAPID_CLIENT_SECRET) {
-            throw new Error("Missing Rapid Credentials (CLIENT_ID or SECRET)");
-        }
-        const auth = Buffer.from(`${RAPID_CLIENT_ID}:${RAPID_CLIENT_SECRET}`).toString('base64');
+        // For Sandbox, these MUST be 'client' and 'secret' literally.
+        const cid = (RAPID_ENV === 'SANDBOX' || RAPID_ENV === 'TEST') ? "client" : RAPID_CLIENT_ID;
+        const sec = (RAPID_ENV === 'SANDBOX' || RAPID_ENV === 'TEST') ? "secret" : RAPID_CLIENT_SECRET;
+
+        if (!cid || !sec) throw new Error("Missing Rapid Credentials");
+
+        const auth = Buffer.from(`${cid}:${sec}`).toString('base64');
         const response = await axios.post(`${BASE_URL}/oauth2/token`,
             'grant_type=client_credentials',
             {
@@ -81,88 +84,68 @@ async function getAccessToken() {
         );
         return response.data.access_token;
     } catch (error) {
-        console.error('RapidGateway Token Error:', error.response?.data || error.message);
-        throw new Error(`Auth Failed: ${JSON.stringify(error.response?.data || error.message)}`);
+        console.error('Rapid Auth Failed:', error.response?.data || error.message);
+        throw new Error("Rapid Gateway Authentication Failed");
     }
 }
 
-/** ── NEW: Embedded Checkout Flow (Step 2: Create Session) ─── */
+/** ── STEP 2: Initiate Hosted Checkout (Redirect Flow) ───────── */
 router.post('/initiate', async (req, res) => {
     try {
-        console.log("💰 Payment Request Received:", JSON.stringify(req.body));
-
-        // Supporting various body formats (Direct or nested)
         const data = req.body.paymentIntent || req.body;
-        const amount = data.amount;
-        const userId = data.userId || data.customer?.userId;
-        const phone = data.phone || data.customer?.phone;
+        const { amount, userId, phone } = data;
 
-        if (!amount || !userId || !phone) {
-            return res.status(400).json({
-                success: false,
-                message: "Invalid Request: amount, userId, and phone are required",
-                received: { amount, userId, phone }
-            });
-        }
+        if (!amount || !userId || !phone) return res.status(400).json({ success: false, message: "Missing data" });
 
         const token = await getAccessToken();
 
-        // 1. Prepare Customer Info
+        // Standardize Phone (03XXXXXXXXX)
         let normalizedPhone = phone.toString().trim().replace(/\D/g, '');
         if (normalizedPhone.startsWith('92')) normalizedPhone = '0' + normalizedPhone.slice(2);
         if (!normalizedPhone.startsWith('0')) normalizedPhone = '0' + normalizedPhone;
 
         const basketId = `CHALO-${userId}-${Date.now()}`;
 
-        // 2. Request Checkout Session from Rapid
-        const sessionPayload = {
-            merchantId: parseInt(RAPID_MERCHANT_ID),
-            amount: parseFloat(amount),
-            currency: 'PKR',
-            basketId: basketId,
-            customerEmail: 'customer@chalo.app',
-            customerMobile: normalizedPhone
-        };
+        // Prepare URLSearchParams for Redirect Flow (x-www-form-urlencoded)
+        const params = new URLSearchParams();
+        params.append('MERCHANT_ID', RAPID_MERCHANT_ID);
+        params.append('MERCHANT_NAME', 'Chalo Drive');
+        params.append('TXNAMT', Math.round(amount).toString());
+        params.append('CURRENCY_CODE', 'PKR');
+        params.append('CUSTOMER_MOBILE_NO', normalizedPhone);
+        params.append('CUSTOMER_EMAIL_ADDRESS', 'customer@chalo.app');
+        params.append('BASKET_ID', basketId);
+        // Use environment variables for URLs if available, otherwise construct
+        params.append('SUCCESS_URL', process.env.RAPID_SUCCESS_URL || `https://${req.get('host')}/payments/success`);
+        params.append('FAILURE_URL', process.env.RAPID_FAILURE_URL || `https://${req.get('host')}/payments/failure`);
+        params.append('VERSION', 'MY_VER_1.0');
+        params.append('PROCCODE', '0');
 
-        console.log("🚀 Creating Rapid Session with Payload:", JSON.stringify(sessionPayload));
+        const endpoint = (RAPID_ENV === 'LIVE') ? '/rapid/process-transaction' : '/sandbox/process-transaction';
 
+        console.log(`🚀 Initiating Redirect Checkout: ${BASE_URL}${endpoint}`);
+
+        // We use maxRedirects: 0 because Rapid returns a 302 with the checkout URL in Location header
         try {
-            const response = await axios.post(`${BASE_URL}/v1/checkout-sessions`, sessionPayload, {
+            await axios.post(`${BASE_URL}${endpoint}`, params.toString(), {
                 headers: {
                     'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json',
-                    'X-Environment': (RAPID_ENV === 'LIVE') ? 'LIVE' : 'TEST'
-                }
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                maxRedirects: 0
             });
-
-            const { sessionId, clientSecret, publishableKey } = response.data;
-            console.log("✅ Rapid Session Created:", sessionId);
-
-            // Construct absolute URL for the checkout page
-            const protocol = req.headers['x-forwarded-proto'] || 'https';
-            const host = req.get('host');
-            const checkoutUrl = `${protocol}://${host}/payments/checkout?sid=${sessionId}&secret=${clientSecret}&pk=${publishableKey}&amt=${amount}&bid=${basketId}`;
-
-            res.json({
-                success: true,
-                checkout_url: checkoutUrl
-            });
-        } catch (axiosError) {
-            console.error("❌ Rapid API Post Failed:", axiosError.response?.data || axiosError.message);
-            return res.status(axiosError.response?.status || 500).json({
-                success: false,
-                message: "Rapid API call failed",
-                error: axiosError.response?.data || axiosError.message
-            });
+        } catch (redirErr) {
+            const checkoutUrl = redirErr.response?.headers?.location || redirErr.response?.headers?.Location;
+            if (checkoutUrl) {
+                return res.json({ success: true, checkout_url: checkoutUrl });
+            }
         }
 
+        throw new Error("Failed to capture Checkout URL");
+
     } catch (error) {
-        console.error("❌ Rapid Session Error Details:", error.response?.data || error.message);
-        res.status(500).json({
-            success: false,
-            message: "Internal Server Error during payment initiation",
-            error: error.response?.data || error.message
-        });
+        console.error("❌ Initiation Error:", error.message);
+        res.status(500).json({ success: false, message: error.message });
     }
 });
 
