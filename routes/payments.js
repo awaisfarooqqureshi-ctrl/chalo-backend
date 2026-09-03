@@ -3,6 +3,7 @@ const router = express.Router();
 const axios = require('axios');
 const crypto = require('crypto');
 const admin = require('firebase-admin');
+const Transaction = require('../models/Transaction');
 
 // Detect Environment and Base URL
 const RAPID_ENV = (process.env.RAPID_ENVIRONMENT || 'SANDBOX').toUpperCase();
@@ -59,17 +60,21 @@ async function updateBalance(userId, amount, basketId) {
             timestamp: Date.now()
         });
 
-        // 4. Add Transaction Log
-        const transId = userRef.child('transactions').push().key;
-        await userRef.child(`transactions/${transId}`).set({
-            id: transId,
-            title: "Wallet Top-up",
-            amount: parseFloat(amount),
-            type: "CREDIT",
-            timestamp: Date.now(),
-            status: "COMPLETED",
-            reference: basketId
-        });
+        // 4. Add Transaction Log (Now in MongoDB)
+        try {
+            await new Transaction({
+                userId: cleanId,
+                title: "Wallet Top-up",
+                amount: parseFloat(amount),
+                type: "CREDIT",
+                status: "COMPLETED",
+                reference: basketId,
+                timestamp: Date.now()
+            }).save();
+            console.log(`📦 Transaction archived to MongoDB for ${cleanId}`);
+        } catch (mongoErr) {
+            console.error("❌ MongoDB Transaction Archive Failed:", mongoErr.message);
+        }
 
         console.log(`✅ Success: User ${cleanId} wallet updated.`);
     } catch (e) {

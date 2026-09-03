@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const admin = require('firebase-admin');
 const MongoRide = require('../models/Ride'); // Scale Optimization: Cold Storage Model
+const Transaction = require('../models/Transaction');
 
 // 1. Request Ride (Pure RTDB for real-time performance)
 router.post('/request', async (req, res) => {
@@ -96,11 +97,20 @@ router.post('/update-status', async (req, res) => {
                                         const currentBalance = (driver.walletBalance || 0) + scheme.reward;
                                         await driverRef.update({ walletBalance: currentBalance });
 
-                                        const tid = driverRef.child('transactions').push().key;
-                                        await driverRef.child(`transactions/${tid}`).set({
-                                            id: tid, title: `Bonus: ${scheme.title}`, amount: scheme.reward,
-                                            type: "CREDIT", status: "COMPLETED", timestamp: Date.now()
-                                        });
+                                        // --- SCALE OPTIMIZATION: SAVE TRANSACTION TO MONGODB ---
+                                        try {
+                                            await new Transaction({
+                                                userId: driverId,
+                                                title: `Bonus: ${scheme.title}`,
+                                                amount: scheme.reward,
+                                                type: "CREDIT",
+                                                status: "COMPLETED",
+                                                timestamp: Date.now()
+                                            }).save();
+                                            console.log(`✅ Bonus transaction archived to MongoDB for ${driverId}`);
+                                        } catch (tErr) {
+                                            console.error("❌ Bonus Transaction Archive Failed:", tErr.message);
+                                        }
 
                                         newProgress = 0; // Renew cycle
                                     }

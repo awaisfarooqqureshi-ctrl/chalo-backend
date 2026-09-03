@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const admin = require('firebase-admin');
+const Transaction = require('../models/Transaction');
 const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
@@ -98,6 +99,19 @@ router.get('/transactions/:userId', async (req, res) => {
         const snapshot = await db.ref(`users/${cleanId}/transactions`).get();
         res.json(snapshot.exists() ? Object.values(snapshot.val()) : []);
     } catch (e) { res.status(500).send(e.message); }
+});
+
+// 6. Get User Transactions from MongoDB (Limited to 15)
+router.get('/transactions/:userId', async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const transactions = await Transaction.find({ userId: userId })
+            .sort({ timestamp: -1 })
+            .limit(15);
+        res.json(transactions);
+    } catch (e) {
+        res.status(500).send(e.message);
+    }
 });
 
 module.exports = router;
