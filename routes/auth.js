@@ -74,10 +74,13 @@ router.post('/verify-otp-veevo', async (req, res) => {
         // Delete OTP after use
         await otpRef.remove();
 
-        // 1. Fetch System Config for Rewards
+        // 1. Fetch System Config for Rewards (Strict Data Parsing)
         const configSnap = await db.ref('admin_config/settings').get();
         const config = configSnap.val() || {};
-        const welcomeBonus = config.welcome_bonus_amount || 0;
+
+        // Use Number() to ensure it's not treated as string or null
+        const welcomeBonus = Number(config.welcome_bonus_amount) || 0;
+        console.log(`🎁 Config Read - Welcome Bonus: ${welcomeBonus}`);
 
         // 2. Check if user exists in RTDB
         const userRef = db.ref(`users/${cleanPhone}`);
@@ -85,11 +88,11 @@ router.post('/verify-otp-veevo', async (req, res) => {
         let userData;
 
         if (!userSnap.exists()) {
-            console.log(`🆕 Creating brand new user in RTDB for: ${cleanPhone}`);
+            console.log(`🆕 Creating brand new user: ${cleanPhone}`);
             userData = {
                 uid: cleanPhone,
                 phoneNumber: phone,
-                name: "",
+                name: "New User",
                 role: "Passenger",
                 walletBalance: welcomeBonus,
                 accountStatus: "active",
@@ -110,10 +113,12 @@ router.post('/verify-otp-veevo', async (req, res) => {
                     timestamp: Date.now(),
                     status: "COMPLETED"
                 };
+                console.log(`✅ Welcome Bonus of ${welcomeBonus} assigned to ${cleanPhone}`);
             }
             await userRef.set(userData);
         } else {
             userData = userSnap.val();
+            console.log(`ℹ️ Existing user ${cleanPhone} logged in. No bonus.`);
         }
 
         const firebaseToken = await admin.auth().createCustomToken(cleanPhone);
