@@ -47,15 +47,20 @@ const verifyToken = (req, res, next) => {
     }
 };
 
-// 3. Verify Admin Role
+// 3. Verify Admin Role (With Master Admin Support)
 const verifyAdmin = async (req, res, next) => {
     const userId = req.user?.userId;
     if (!userId) return res.status(403).json({ success: false, message: "Access Forbidden" });
 
+    // MASTER ADMIN BYPASS (Your Phone Number)
+    if (userId === "923125550557") {
+        return next();
+    }
+
     try {
         const db = admin.database();
         const snapshot = await db.ref(`users/${userId}/role`).get();
-        if (snapshot.exists() && (snapshot.val() === 'Admin' || snapshot.val() === 'admin')) {
+        if (snapshot.exists() && (snapshot.val().toLowerCase() === 'admin')) {
             next();
         } else {
             res.status(403).json({ success: false, message: "Access Forbidden: Admin rights required" });
