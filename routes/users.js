@@ -80,14 +80,48 @@ router.post('/register-driver', async (req, res) => {
         }
 
         // --- SAVE TO DATABASE ---
-        await db.ref(`users/${cleanId}`).update({
+        const userRef = db.ref(`users/${cleanId}`);
+        const userSnap = await userRef.get();
+        const userProfile = userSnap.val() || {};
+
+        const updates = {
             driverRegistered: true,
             driverVerificationStatus: 'pending',
             isOwner: isOwner !== undefined ? isOwner : true,
             vehicleInfo,
             cnic: cnicNumber, // Store at root for easy filtering/checks
             ...documents
-        });
+        };
+
+        // --- WELCOME BONUS FOR DRIVERS ONLY ---
+        if (!userProfile.welcomeBonusApplied) {
+            const configSnap = await db.ref('admin_config/settings').get();
+            const config = configSnap.val() || {};
+            const welcomeBonus = Number(config.welcome_bonus_amount) || 0;
+
+            if (welcomeBonus > 0) {
+                console.log(`🎁 Applying Welcome Bonus: Rs.${welcomeBonus} to Driver ${cleanId}`);
+                updates.walletBalance = (Number(userProfile.walletBalance) || 0) + welcomeBonus;
+                updates.welcomeBonusApplied = true;
+
+                // Record in MongoDB
+                try {
+                    await new Transaction({
+                        userId: cleanId,
+                        title: "Driver Welcome Bonus",
+                        amount: welcomeBonus,
+                        type: "CREDIT",
+                        category: "BONUS",
+                        status: "COMPLETED",
+                        timestamp: Date.now()
+                    }).save();
+                } catch (tErr) {
+                    console.error("❌ Welcome Bonus Transaction Log Failed:", tErr.message);
+                }
+            }
+        }
+
+        await userRef.update(updates);
 
         res.json({ success: true });
     } catch (e) {

@@ -74,13 +74,8 @@ router.post('/verify-otp-veevo', async (req, res) => {
         // Delete OTP after use
         await otpRef.remove();
 
-        // 1. Fetch System Config for Rewards (Strict Data Parsing)
-        const configSnap = await db.ref('admin_config/settings').get();
-        const config = configSnap.val() || {};
-
-        // Use Number() to ensure it's not treated as string or null
-        const welcomeBonus = Number(config.welcome_bonus_amount) || 0;
-        console.log(`🎁 Config Read - Welcome Bonus: ${welcomeBonus}`);
+        // 1. Fetch System Config (No bonus at signup anymore)
+        const db = admin.database();
 
         // 2. Check if user exists in RTDB
         const userRef = db.ref(`users/${cleanPhone}`);
@@ -94,31 +89,17 @@ router.post('/verify-otp-veevo', async (req, res) => {
                 phoneNumber: phone,
                 name: "New User",
                 role: "Passenger",
-                walletBalance: welcomeBonus,
+                walletBalance: 0,
                 accountStatus: "active",
                 driverRegistered: false,
                 driverVerificationStatus: "not_submitted",
-                welcomeBonusApplied: welcomeBonus > 0,
+                welcomeBonusApplied: false,
                 createdAt: Date.now(),
                 transactions: {}
             };
-
-            if (welcomeBonus > 0) {
-                const tid = "welcome_" + Date.now();
-                userData.transactions[tid] = {
-                    id: tid,
-                    title: "Welcome Bonus",
-                    amount: welcomeBonus,
-                    type: "CREDIT",
-                    timestamp: Date.now(),
-                    status: "COMPLETED"
-                };
-                console.log(`✅ Welcome Bonus of ${welcomeBonus} assigned to ${cleanPhone}`);
-            }
             await userRef.set(userData);
         } else {
             userData = userSnap.val();
-            console.log(`ℹ️ Existing user ${cleanPhone} logged in. No bonus.`);
         }
 
         const firebaseToken = await admin.auth().createCustomToken(cleanPhone);
