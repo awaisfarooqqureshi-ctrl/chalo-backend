@@ -55,7 +55,11 @@ const { verifyAppKey, verifyToken, verifyAdmin } = require('./middleware/auth');
 app.use('/auth', require('./routes/auth'));
 
 // Global Security for other routes
-app.use(verifyAppKey);
+app.use((req, res, next) => {
+    // Force collapse double slashes in URL
+    req.url = req.url.replace(/\/+/g, '/');
+    verifyAppKey(req, res, next);
+});
 
 app.use('/users', verifyToken, require('./routes/users'));
 app.use('/rides', verifyToken, require('./routes/rides'));
