@@ -38,7 +38,8 @@ router.post('/send-otp-veevo', async (req, res) => {
                 mask: SMS_CONFIG.mask,
                 to: cleanPhone,
                 msg: message,
-                type: 'json'
+                type: 'json',
+                lang: 'english'
             }
         });
         console.log("📡 Gateway API Response:", JSON.stringify(response.data));
