@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const admin = require('firebase-admin');
+const Notification = require('../models/Notification');
 
 /**
  * PRODUCTION ADMIN ROUTES
@@ -38,21 +39,56 @@ router.post('/bonuses', async (req, res) => {
     }
 });
 
-// 3. Approve/Verify Driver Documents
+// 3. Approve/Verify Driver Documents + Automated Notification
 router.post('/approve-driver', async (req, res) => {
     const { userId, status, notes } = req.body; // status: approved, rejected
     try {
         const db = admin.database();
+        const cleanId = userId.toString().replace(/\+/g, '').trim();
 
-        // SCALE FIX: Consolidating notes into 'adminNote' for consistency across the app
+        // 1. Update Firebase RTDB
         const updates = {
             driverVerificationStatus: status,
-            adminNote: notes || "", // Primary note field
-            verificationNotes: notes || "" // Keep for legacy compatibility
+            adminNote: notes || ""
         };
 
-        await db.ref(`users/${userId}`).update(updates);
-        res.json({ success: true, message: `Driver status updated to ${status}`, data: updates });
+        // If approved, set driverRegistered to true just in case
+        if (status === 'approved') {
+            updates.driverRegistered = true;
+        }
+
+        await db.ref(`users/${cleanId}`).update(updates);
+
+        // 2. Automated Notification Logic
+        const title = status === 'approved' ? "Verification Approved! 🎉" : "Registration Rejected";
+        const message = notes || (status === 'approved' ? "Welcome to Chalo! Your driver account is now active." : "Please check your profile for details on why your registration was rejected.");
+
+        // A. Save to MongoDB Notification History
+        try {
+            const notif = new Notification({
+                userId: cleanId,
+                title,
+                message,
+                type: status === 'approved' ? 'SYSTEM' : 'REJECTION'
+            });
+            await notif.save();
+        } catch (mErr) { console.error("❌ MongoDB Notif Save Failed:", mErr.message); }
+
+        // B. Send Real-time Push Notification via FCM
+        try {
+            const tokenSnap = await db.ref(`users/${cleanId}/fcmToken`).get();
+            if (tokenSnap.exists()) {
+                const fcmToken = tokenSnap.val();
+                await admin.messaging().send({
+                    token: fcmToken,
+                    notification: { title, body: message },
+                    data: { type: 'VERIFICATION_UPDATE', status }
+                });
+                console.log(`🚀 Push sent to Driver ${cleanId}`);
+            }
+        } catch (pErr) { console.error("❌ FCM Push Failed:", pErr.message); }
+
+        res.json({ success: true, message: `Driver status updated and notification sent.` });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
