@@ -47,25 +47,24 @@ const verifyToken = (req, res, next) => {
     }
 };
 
-// 3. Verify Admin Role (With Master Admin Support)
+// 3. Verify Admin Role (Strictly Database Driven)
 const verifyAdmin = async (req, res, next) => {
     const userId = req.user?.userId;
     if (!userId) return res.status(403).json({ success: false, message: "Access Forbidden" });
 
-    // MASTER ADMIN BYPASS (Your Phone Number)
-    if (userId === "923125550557") {
-        return next();
-    }
-
     try {
         const db = admin.database();
+        // Check user role in Realtime Database (RTDB)
         const snapshot = await db.ref(`users/${userId}/role`).get();
+
         if (snapshot.exists() && (snapshot.val().toLowerCase() === 'admin')) {
-            next();
+            return next();
         } else {
+            console.warn(`🛡️ Unauthorized Admin Attempt: ${userId}`);
             res.status(403).json({ success: false, message: "Access Forbidden: Admin rights required" });
         }
     } catch (error) {
+        console.error("❌ Admin Verification Error:", error.message);
         res.status(500).json({ success: false, message: "Server error during authorization" });
     }
 };
