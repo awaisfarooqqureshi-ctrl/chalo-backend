@@ -55,10 +55,7 @@ const { verifyAppKey, verifyToken, verifyAdmin } = require('./middleware/auth');
 app.use('/auth', require('./routes/auth'));
 
 // Global Security for other routes
-app.use((req, res, next) => {
-    if (req.method === 'OPTIONS') return next();
-    verifyAppKey(req, res, next);
-});
+app.use(verifyAppKey);
 
 app.use('/users', verifyToken, require('./routes/users'));
 app.use('/rides', verifyToken, require('./routes/rides'));
@@ -68,6 +65,16 @@ app.use('/emergency', verifyToken, require('./routes/emergency'));
 app.use('/notifications', verifyToken, require('./routes/notifications'));
 app.use('/maps', require('./routes/maps'));
 app.use('/admin', verifyToken, verifyAdmin, require('./routes/admin'));
+
+// 4. GLOBAL ERROR HANDLER (Scale Optimization: Prevents server crash)
+app.use((err, req, res, next) => {
+    console.error("🔥 Global Error Caught:", err.stack);
+    res.status(err.status || 500).json({
+        success: false,
+        message: err.message || "Internal Server Error",
+        stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    });
+});
 
 // 3. SCALE OPTIMIZATION: Uber-style Spatial Sockets (H3 Rooms)
 const h3 = require('h3-js');
