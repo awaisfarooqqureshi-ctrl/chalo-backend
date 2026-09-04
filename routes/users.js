@@ -38,26 +38,61 @@ router.post('/upload-image', (req, res, next) => {
     });
 });
 
-// 6. Register Driver in RTDB
+// 6. Register Driver in RTDB (With Duplicate Checks)
 router.post('/register-driver', async (req, res) => {
     try {
-        const { userId, vehicleInfo, documents } = req.body;
+        const { userId, vehicleInfo, documents, isOwner } = req.body;
         const cleanId = userId.toString().replace(/\+/g, '').trim();
+        const cnicNumber = documents.cnicNumber || documents.cnic; // Support both names
+        const plateNumber = vehicleInfo.numberPlate;
 
-        console.log(`🚖 Registering driver: ${cleanId}`);
+        console.log(`🚖 Registering driver: ${cleanId}, CNIC: ${cnicNumber}, Plate: ${plateNumber}`);
 
         const db = admin.database();
+        const usersRef = db.ref('users');
+
+        // --- DUPLICATE CHECK: CNIC & Number Plate ---
+        const allUsersSnap = await usersRef.get();
+        const allUsers = allUsersSnap.val() || {};
+
+        for (const uid in allUsers) {
+            if (uid === cleanId) continue; // Skip current user
+
+            const user = allUsers[uid];
+
+            // Check CNIC Duplicate
+            if (cnicNumber && user.cnic === cnicNumber) {
+                console.warn(`❌ Duplicate CNIC found: ${cnicNumber} belongs to ${uid}`);
+                return res.status(400).json({
+                    success: false,
+                    message: "Error: This CNIC number is already registered with another account."
+                });
+            }
+
+            // Check License Plate Duplicate
+            if (plateNumber && user.vehicleInfo?.numberPlate === plateNumber) {
+                console.warn(`❌ Duplicate Plate found: ${plateNumber} belongs to ${uid}`);
+                return res.status(400).json({
+                    success: false,
+                    message: "Error: This vehicle registration number is already in use."
+                });
+            }
+        }
+
+        // --- SAVE TO DATABASE ---
         await db.ref(`users/${cleanId}`).update({
             driverRegistered: true,
             driverVerificationStatus: 'pending',
+            isOwner: isOwner !== undefined ? isOwner : true,
             vehicleInfo,
+            cnic: cnicNumber, // Store at root for easy filtering/checks
             ...documents
         });
 
         res.json({ success: true });
     } catch (e) {
         console.error("❌ Driver Registration Error:", e.message);
-        res.status(500).json({ message: e.message });
+        res.status(500).json({ success: false, message: "Server Error: " + e.message });
     }
 });
 
