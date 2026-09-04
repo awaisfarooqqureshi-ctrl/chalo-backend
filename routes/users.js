@@ -22,18 +22,23 @@ function getSearchIds(userId) {
 
 // --- 2. RESTORED: Image Upload Proxy ---
 router.post('/upload-image', (req, res) => {
-    upload.single('image')(req, res, (err) => {
-        if (err) {
-            console.error("❌ Multer Upload Error:", err.message);
-            return res.status(500).json({ success: false, message: "Upload Error: " + err.message });
-        }
-        if (!req.file) {
-            console.error("❌ No file in request");
-            return res.status(400).json({ success: false, message: "No file uploaded" });
-        }
-        console.log(`✅ File uploaded to Cloudinary: ${req.file.path}`);
-        res.json({ success: true, url: req.file.path });
-    });
+    try {
+        upload.single('image')(req, res, (err) => {
+            if (err) {
+                console.error("❌ Multer Upload Error:", err.message);
+                return res.status(500).json({ success: false, message: "Upload Error: " + err.message });
+            }
+            if (!req.file) {
+                console.error("❌ No file in request");
+                return res.status(400).json({ success: false, message: "No file uploaded" });
+            }
+            console.log(`✅ File uploaded to Cloudinary: ${req.file.path}`);
+            res.json({ success: true, url: req.file.path });
+        });
+    } catch (criticalErr) {
+        console.error("🔥 Critical Upload Proxy Error:", criticalErr.message);
+        res.status(500).json({ success: false, message: criticalErr.message });
+    }
 });
 
 // --- 3. RESTORED: Driver Registration with Duplicate Checks ---
