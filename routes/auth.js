@@ -24,17 +24,23 @@ router.post('/send-otp-veevo', async (req, res) => {
     const cleanPhone = phone.replace(/\D/g, '').trim();
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // EXACT MATCH with your portal template for Auto-OTP detection
-    // Make sure this matches your approved template on fastsmsalerts.com
+    // PURE TEMPLATE MATCH (No special characters around OTP)
     const message = `Your Chalo App OTP is: ${otpCode}. bdGiWfgWrVy`;
 
-    console.log(`✉️ Sending SMS to: ${cleanPhone} | Code: ${otpCode}`);
-    console.log(`📝 Full Content: "${message}"`);
+    console.log(`✉️ FastSMS Dispatch: To=${cleanPhone}, Message="${message}"`);
 
     try {
-        const fastSmsUrl = `${SMS_CONFIG.baseUrl}?id=${SMS_CONFIG.id}&pass=${SMS_CONFIG.pass}&mask=${encodeURIComponent(SMS_CONFIG.mask)}&to=${cleanPhone}&msg=${encodeURIComponent(message)}&type=json&lang=english`;
-
-        const response = await axios.get(fastSmsUrl);
+        const fastSmsUrl = SMS_CONFIG.baseUrl;
+        const response = await axios.get(fastSmsUrl, {
+            params: {
+                id: SMS_CONFIG.id,
+                pass: SMS_CONFIG.pass,
+                mask: SMS_CONFIG.mask,
+                to: cleanPhone,
+                msg: message,
+                type: 'json'
+            }
+        });
         console.log("📡 Gateway API Response:", JSON.stringify(response.data));
 
         const isSuccess = response.data && (response.data.status === "success" || response.data.message_id || (typeof response.data === 'string' && response.data.includes("Successfully")));
