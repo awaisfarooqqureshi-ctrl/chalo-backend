@@ -137,15 +137,22 @@ router.post('/admin/login', async (req, res) => {
         adminUser.lastLogin = Date.now();
         await adminUser.save();
 
-        const token = jwt.sign(
+        const accessToken = jwt.sign(
             { userId: adminUser._id, email: adminUser.email, role: adminUser.role, isAdmin: true },
             CHALO_SECRET,
-            { expiresIn: '24h' }
+            { expiresIn: '1h' }
+        );
+
+        const refreshToken = jwt.sign(
+            { userId: adminUser._id, isAdmin: true },
+            process.env.REFRESH_TOKEN_SECRET || 'chalo_refresh_secret',
+            { expiresIn: '7d' }
         );
 
         res.json({
             success: true,
-            token,
+            accessToken,
+            refreshToken,
             admin: {
                 id: adminUser._id,
                 name: adminUser.name,
@@ -155,6 +162,33 @@ router.post('/admin/login', async (req, res) => {
         });
     } catch (e) {
         res.status(500).json({ success: false, message: e.message });
+    }
+});
+
+/**
+ * 4. Refresh Admin Token
+ */
+router.post('/admin/refresh-token', async (req, res) => {
+    const { refreshToken } = req.body;
+    if (!refreshToken) return res.status(401).json({ success: false, message: "Refresh token required" });
+
+    try {
+        const decoded = jwt.verify(refreshToken, process.env.REFRESH_TOKEN_SECRET || 'chalo_refresh_secret');
+        const adminUser = await AdminModel.findById(decoded.userId);
+
+        if (!adminUser || !adminUser.isActive) {
+            return res.status(403).json({ success: false, message: "Invalid or inactive admin" });
+        }
+
+        const newAccessToken = jwt.sign(
+            { userId: adminUser._id, email: adminUser.email, role: adminUser.role, isAdmin: true },
+            CHALO_SECRET,
+            { expiresIn: '1h' }
+        );
+
+        res.json({ success: true, accessToken: newAccessToken });
+    } catch (e) {
+        res.status(403).json({ success: false, message: "Invalid or expired refresh token" });
     }
 });
 
