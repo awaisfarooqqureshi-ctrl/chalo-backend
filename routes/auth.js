@@ -75,7 +75,6 @@ router.post('/verify-otp-veevo', async (req, res) => {
         await otpRef.remove();
 
         // 1. Fetch System Config (No bonus at signup anymore)
-        const db = admin.database();
 
         // 2. Check if user exists in RTDB
         const userRef = db.ref(`users/${cleanPhone}`);
