@@ -140,7 +140,7 @@ router.post('/admin/login', async (req, res) => {
         const accessToken = jwt.sign(
             { userId: adminUser._id, email: adminUser.email, role: adminUser.role, isAdmin: true },
             CHALO_SECRET,
-            { expiresIn: '1h' }
+            { expiresIn: '24h' }
         );
 
         const refreshToken = jwt.sign(
