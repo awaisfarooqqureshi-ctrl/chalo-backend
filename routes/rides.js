@@ -53,19 +53,26 @@ router.post('/update-status', async (req, res) => {
                             // 1. Update Earnings
                             let monthlyEarnings = (driver.lastEarningsResetMonth === currentMonth) ? (driver.monthlyEarnings || 0) + fare : fare;
 
-                            // 2. Increment Ride Counters
+                            // 2. Today's Earnings Logic (Reset if day changed)
+                            const startOfDay = new Date().setHours(0,0,0,0);
+                            let todayEarnings = (driver.lastEarningsResetDay >= startOfDay) ? (driver.todayEarnings || 0) + fare : fare;
+
+                            // 3. Increment Ride Counters
                             const totalRides = (driver.driverTotalRides || 0) + 1;
                             const completedRides = (driver.driverCompletedRides || 0) + 1;
 
                             await driverRef.update({
+                                todayEarnings,
                                 monthlyEarnings,
                                 lifetimeEarnings: (driver.lifetimeEarnings || 0) + fare,
                                 lastEarningsResetMonth: currentMonth,
+                                lastEarningsResetDay: Date.now(),
                                 driverTotalRides: totalRides,
                                 driverCompletedRides: completedRides,
                                 isOnline: true,
                                 driverStatus: 'AVAILABLE'
                             });
+                            console.log(`✅ Counters updated for ${driverId}: Rides=${completedRides}, Today=Rs.${todayEarnings}`);
 
                             // 3. BONUS LOGIC: Update progress for all active schemes
                             const schemesSnap = await db.ref('bonus_schemes').get();
