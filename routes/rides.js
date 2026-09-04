@@ -297,13 +297,16 @@ router.post('/update-payment', async (req, res) => {
 router.get('/history/:userId', async (req, res) => {
     try {
         const rawId = req.params.userId;
-        const regex = getIdentityFilter(rawId);
+        const cleanId = rawId.replace(/\+/g, '').trim();
+        const digits = cleanId.slice(-10);
+        const regex = new RegExp(digits + '$');
 
-        console.log(`📜 History Fetch Request for: ${rawId}`);
+        console.log(`📜 History Fetch Request for: ${rawId}, SearchDigits: ${digits}`);
 
-        // Search using Regex (ends with last 10 digits) OR direct match
         const query = {
             $or: [
+                { passengerId: cleanId },
+                { driverId: cleanId },
                 { passengerId: rawId },
                 { driverId: rawId },
                 { passengerId: regex },
@@ -313,7 +316,7 @@ router.get('/history/:userId', async (req, res) => {
 
         const rides = await MongoRide.find(query).sort({ timestamp: -1 }).limit(50);
 
-        console.log(`✅ MongoDB Response: Found ${rides.length} rides for query.`);
+        console.log(`✅ Found ${rides.length} rides in history.`);
         res.json(rides);
     } catch (e) {
         console.error("❌ History Route Error:", e.message);
