@@ -13,19 +13,29 @@ const storage = new CloudinaryStorage({ cloudinary: cloudinary, params: { folder
 const upload = multer({ storage: storage });
 
 // 3. Upload Image Proxy
-router.post('/upload-image', upload.single('image'), async (req, res) => {
-    try {
-        console.log("📸 Image upload request received");
-        if (!req.file) {
-            console.error("❌ No file in request");
-            return res.status(400).json({ success: false, message: "No file uploaded" });
+router.post('/upload-image', (req, res, next) => {
+    upload.single('image')(req, res, (err) => {
+        if (err instanceof multer.MulterError) {
+            console.error("❌ Multer Error:", err.message);
+            return res.status(400).json({ success: false, message: `Multer Error: ${err.message}` });
+        } else if (err) {
+            console.error("❌ Unknown Upload Error:", err.message);
+            return res.status(500).json({ success: false, message: `Upload Error: ${err.message}` });
         }
-        console.log(`✅ File uploaded to Cloudinary: ${req.file.path}`);
-        res.json({ success: true, url: req.file.path });
-    } catch (e) {
-        console.error("❌ Cloudinary Upload Proxy Error:", e.message);
-        res.status(500).json({ success: false, message: e.message });
-    }
+
+        try {
+            console.log("📸 Image upload request received");
+            if (!req.file) {
+                console.error("❌ No file in request");
+                return res.status(400).json({ success: false, message: "No file uploaded" });
+            }
+            console.log(`✅ File uploaded to Cloudinary: ${req.file.path}`);
+            res.json({ success: true, url: req.file.path });
+        } catch (e) {
+            console.error("❌ Cloudinary Callback Error:", e.message);
+            res.status(500).json({ success: false, message: e.message });
+        }
+    });
 });
 
 // 6. Register Driver in RTDB
