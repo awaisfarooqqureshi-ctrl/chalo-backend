@@ -47,11 +47,17 @@ const verifyToken = (req, res, next) => {
     }
 };
 
-// 3. Verify Admin Role (Strictly Database Driven)
+// 3. Verify Admin Role (Database Driven + Dashboard Support)
 const verifyAdmin = async (req, res, next) => {
-    const userId = req.user?.userId;
+    const { userId, isAdmin, role } = req.user || {};
     if (!userId) return res.status(403).json({ success: false, message: "Access Forbidden" });
 
+    // A. Dashboard Token Check (JWT carries isAdmin flag)
+    if (isAdmin === true && (role === 'SUPER_ADMIN' || role === 'MANAGER')) {
+        return next();
+    }
+
+    // B. Mobile App Admin Check (Verified against RTDB)
     try {
         const db = admin.database();
         // Check user role in Realtime Database (RTDB)

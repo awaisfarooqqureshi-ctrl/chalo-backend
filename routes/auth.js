@@ -3,6 +3,7 @@ const router = express.Router();
 const axios = require('axios');
 const jwt = require('jsonwebtoken');
 const admin = require('firebase-admin');
+const AdminModel = require('../models/Admin');
 
 // --- FASTSMSALERTS.COM CONFIGURATION (Secrets from .env) ---
 const SMS_CONFIG = {
@@ -114,6 +115,75 @@ router.post('/verify-otp-veevo', async (req, res) => {
     } catch (e) {
         console.error("❌ Login Verification Error:", e.message);
         res.status(500).send("Login failed");
+    }
+});
+
+/**
+ * 3. Dashboard Admin Login (Email/Password)
+ */
+router.post('/admin/login', async (req, res) => {
+    const { email, password } = req.body;
+    try {
+        const adminUser = await AdminModel.findOne({ email });
+        if (!adminUser || !adminUser.isActive) {
+            return res.status(401).json({ success: false, message: "Invalid credentials" });
+        }
+
+        const isMatch = await adminUser.comparePassword(password);
+        if (!isMatch) {
+            return res.status(401).json({ success: false, message: "Invalid credentials" });
+        }
+
+        adminUser.lastLogin = Date.now();
+        await adminUser.save();
+
+        const token = jwt.sign(
+            { userId: adminUser._id, email: adminUser.email, role: adminUser.role, isAdmin: true },
+            CHALO_SECRET,
+            { expiresIn: '24h' }
+        );
+
+        res.json({
+            success: true,
+            token,
+            admin: {
+                id: adminUser._id,
+                name: adminUser.name,
+                email: adminUser.email,
+                role: adminUser.role
+            }
+        });
+    } catch (e) {
+        res.status(500).json({ success: false, message: e.message });
+    }
+});
+
+/**
+ * 4. Initial Admin Setup (One-time use to create first SUPER_ADMIN)
+ */
+router.post('/admin/setup-initial', async (req, res) => {
+    const { name, email, password, secretKey } = req.body;
+
+    // Only allow if no admins exist or with a special environment key
+    if (secretKey !== process.env.ADMIN_SETUP_KEY && secretKey !== "chalo_setup_2026") {
+        return res.status(403).json({ success: false, message: "Unauthorized setup attempt" });
+    }
+
+    try {
+        const existing = await AdminModel.findOne({ email });
+        if (existing) return res.status(400).json({ success: false, message: "Admin already exists" });
+
+        const newAdmin = new AdminModel({
+            name,
+            email,
+            password,
+            role: 'SUPER_ADMIN'
+        });
+
+        await newAdmin.save();
+        res.json({ success: true, message: "Master Admin created successfully" });
+    } catch (e) {
+        res.status(500).json({ success: false, message: e.message });
     }
 });
 
