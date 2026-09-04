@@ -165,20 +165,32 @@ router.post('/update-payment', async (req, res) => {
     } catch (e) { res.status(500).send(e.message); }
 });
 
-// 6. Get History (Aggressive ID Matching)
+// 6. Get History (Aggressive ID Matching + Direct Fallback)
 router.get('/history/:userId', async (req, res) => {
     try {
-        const regex = getIdentityFilter(req.params.userId);
-        if (!regex) return res.json([]);
+        const rawId = req.params.userId;
+        const regex = getIdentityFilter(rawId);
 
-        console.log(`📜 History Search: ending in ${regex.source}`);
+        console.log(`📜 History Fetch Request for: ${rawId}`);
 
-        const rides = await MongoRide.find({
-            $or: [ { passengerId: regex }, { driverId: regex } ]
-        }).sort({ timestamp: -1 }).limit(40);
+        // Search using Regex (ends with last 10 digits) OR direct match
+        const query = {
+            $or: [
+                { passengerId: rawId },
+                { driverId: rawId },
+                { passengerId: regex },
+                { driverId: regex }
+            ]
+        };
 
+        const rides = await MongoRide.find(query).sort({ timestamp: -1 }).limit(50);
+
+        console.log(`✅ MongoDB Response: Found ${rides.length} rides for query.`);
         res.json(rides);
-    } catch (e) { res.status(500).send(e.message); }
+    } catch (e) {
+        console.error("❌ History Route Error:", e.message);
+        res.status(500).send(e.message);
+    }
 });
 
 module.exports = router;
