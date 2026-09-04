@@ -174,11 +174,20 @@ router.post('/update-status', async (req, res) => {
                     // Reset count if last cancel was > 1 hour ago
                     if (now - (p.lastCancellationTimestamp || 0) > 3600000) count = 0;
 
-                    await pRef.update({
-                        passengerCancellationCount: count + 1,
+                    const newCount = count + 1;
+                    const updates = {
+                        passengerCancellationCount: newCount,
                         lastCancellationTimestamp: now
-                    });
-                    console.log(`📉 Passenger Cancellation Hit recorded for ${passengerId}`);
+                    };
+
+                    // Block user for 30 mins if they cancel 5 times in an hour
+                    if (newCount >= 5) {
+                        updates.tempBlockExpiry = now + 1800000;
+                        console.log(`🚫 Passenger ${passengerId} auto-blocked for 30 mins due to 5 cancellations.`);
+                    }
+
+                    await pRef.update(updates);
+                    console.log(`📉 Passenger Cancellation Hit recorded for ${passengerId}. Current Count: ${newCount}`);
                 }
             } else if (cancelledBy === 'driver' && driverId) {
                 const dRef = db.ref(`users/${driverId}`);
