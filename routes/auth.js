@@ -24,14 +24,13 @@ router.post('/send-otp-veevo', async (req, res) => {
     const cleanPhone = phone.replace(/\D/g, '').trim();
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // SIMPLIFIED TEMPLATE: Matches standard FastSMS approved patterns
-    const message = `Your Chalo App OTP is: ${otpCode}`;
+    // RE-INVENTED TEMPLATE: Including <#> prefix which is often mandatory for auto-detection
+    const message = `<#> Your Chalo App OTP is: ${otpCode}. bdGiWfgWrVy`;
 
-    console.log(`✉️ FastSMS Dispatch: To=${cleanPhone}, Message="${message}"`);
+    console.log(`✉️ Dispatching SMS to: ${cleanPhone} using FastSMS Gateway...`);
 
     try {
-        const fastSmsUrl = SMS_CONFIG.baseUrl;
-        const response = await axios.get(fastSmsUrl, {
+        const response = await axios.get(SMS_CONFIG.baseUrl, {
             params: {
                 id: SMS_CONFIG.id,
                 pass: SMS_CONFIG.pass,
@@ -40,7 +39,8 @@ router.post('/send-otp-veevo', async (req, res) => {
                 msg: message,
                 type: 'json',
                 lang: 'english'
-            }
+            },
+            timeout: 30000 // 30 seconds timeout to prevent hanging
         });
         console.log("📡 Gateway API Response:", JSON.stringify(response.data));
 
