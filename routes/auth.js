@@ -24,8 +24,8 @@ router.post('/send-otp-veevo', async (req, res) => {
     const cleanPhone = phone.replace(/\D/g, '').trim();
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // PURE TEMPLATE MATCH (No special characters around OTP)
-    const message = `Your Chalo App OTP is: ${otpCode}. bdGiWfgWrVy`;
+    // SIMPLIFIED TEMPLATE: Matches standard FastSMS approved patterns
+    const message = `Your Chalo App OTP is: ${otpCode}`;
 
     console.log(`✉️ FastSMS Dispatch: To=${cleanPhone}, Message="${message}"`);
 
