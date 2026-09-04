@@ -49,9 +49,70 @@ router.post('/update-status', async (req, res) => {
                             const driver = driverSnap.val();
                             const now = new Date();
                             const currentMonth = now.getMonth();
-                            let monthlyEarnings = (driver.lastEarningsResetMonth === currentMonth) ? (driver.monthlyEarnings || 0) + fare : fare;
-                            await driverRef.update({ monthlyEarnings, lifetimeEarnings: (driver.lifetimeEarnings || 0) + fare, lastEarningsResetMonth: currentMonth });
 
+                            // 1. Update Earnings
+                            let monthlyEarnings = (driver.lastEarningsResetMonth === currentMonth) ? (driver.monthlyEarnings || 0) + fare : fare;
+
+                            // 2. Increment Ride Counters
+                            const totalRides = (driver.driverTotalRides || 0) + 1;
+                            const completedRides = (driver.driverCompletedRides || 0) + 1;
+
+                            await driverRef.update({
+                                monthlyEarnings,
+                                lifetimeEarnings: (driver.lifetimeEarnings || 0) + fare,
+                                lastEarningsResetMonth: currentMonth,
+                                driverTotalRides: totalRides,
+                                driverCompletedRides: completedRides,
+                                isOnline: true,
+                                driverStatus: 'AVAILABLE'
+                            });
+
+                            // 3. BONUS LOGIC: Update progress for all active schemes
+                            const schemesSnap = await db.ref('bonus_schemes').get();
+                            if (schemesSnap.exists()) {
+                                const schemes = schemesSnap.val();
+                                for (const sId in schemes) {
+                                    const scheme = schemes[sId];
+                                    if (scheme.isActive) {
+                                        const progressRef = db.ref(`driver_bonus_progress/${driverId}/${sId}`);
+                                        const progSnap = await progressRef.get();
+                                        let currentProgress = progSnap.exists() ? (progSnap.val().currentProgress || 0) : 0;
+                                        let completionCount = progSnap.exists() ? (progSnap.val().completionCount || 0) : 0;
+
+                                        let newProgress = currentProgress + 1;
+
+                                        if (newProgress >= scheme.target) {
+                                            // Goal Met! Pay out bonus
+                                            const reward = Number(scheme.reward);
+                                            const finalWallet = Math.round(((driver.walletBalance || 0) + reward) * 100) / 100;
+                                            await driverRef.update({ walletBalance: finalWallet });
+
+                                            // Log Bonus Transaction
+                                            await new Transaction({
+                                                userId: driverId,
+                                                title: `Bonus: ${scheme.title}`,
+                                                amount: reward,
+                                                type: "CREDIT",
+                                                category: "BONUS",
+                                                status: "COMPLETED",
+                                                timestamp: Date.now()
+                                            }).save();
+
+                                            newProgress = 0; // Reset for next cycle
+                                            completionCount += 1;
+                                        }
+
+                                        await progressRef.set({
+                                            schemeId: sId,
+                                            currentProgress: newProgress,
+                                            completionCount: completionCount,
+                                            lastUpdated: Date.now()
+                                        });
+                                    }
+                                }
+                            }
+
+                            // 4. Log Income Transaction to MongoDB
                             await new Transaction({
                                 userId: driverId,
                                 title: "Ride Income (Directly Received)",
@@ -63,7 +124,7 @@ router.post('/update-status', async (req, res) => {
                                 timestamp: Date.now()
                             }).save();
                         }
-                    } catch (accErr) { console.error("❌ Accounting Error:", accErr.message); }
+                    } catch (accErr) { console.error("❌ Accounting/Bonus Error:", accErr.message); }
                 }
 
                 try {
