@@ -25,10 +25,11 @@ router.post('/send-otp-veevo', async (req, res) => {
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
 
     // EXACT MATCH with your portal template for Auto-OTP detection
-    const message = `<#> Your Chalo App OTP is: ${otpCode}. bdGiWfgWrVy`;
+    // Make sure this matches your approved template on fastsmsalerts.com
+    const message = `Your Chalo App OTP is: ${otpCode}. bdGiWfgWrVy`;
 
-    console.log(`✉️ Attempting to send SMS to: ${cleanPhone}`);
-    console.log(`📝 Message Content: ${message}`);
+    console.log(`✉️ Sending SMS to: ${cleanPhone} | Code: ${otpCode}`);
+    console.log(`📝 Full Content: "${message}"`);
 
     try {
         const fastSmsUrl = `${SMS_CONFIG.baseUrl}?id=${SMS_CONFIG.id}&pass=${SMS_CONFIG.pass}&mask=${encodeURIComponent(SMS_CONFIG.mask)}&to=${cleanPhone}&msg=${encodeURIComponent(message)}&type=json&lang=english`;
