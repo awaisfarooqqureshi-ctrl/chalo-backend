@@ -65,6 +65,7 @@ app.use('/rides', verifyToken, require('./routes/rides'));
 app.use('/carpool', verifyToken, require('./routes/carpool'));
 app.use('/payments', verifyToken, require('./routes/payments'));
 app.use('/emergency', verifyToken, require('./routes/emergency'));
+app.use('/notifications', verifyToken, require('./routes/notifications'));
 app.use('/maps', require('./routes/maps'));
 app.use('/admin', verifyToken, verifyAdmin, require('./routes/admin'));
 

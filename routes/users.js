@@ -7,191 +7,109 @@ const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 
-// Cloudinary
+// 1. Cloudinary Setup
 cloudinary.config({ cloud_name: process.env.CLOUDINARY_CLOUD_NAME, api_key: process.env.CLOUDINARY_API_KEY, api_secret: process.env.CLOUDINARY_API_SECRET });
 const storage = new CloudinaryStorage({ cloudinary: cloudinary, params: { folder: 'chalo_docs', format: async () => 'jpg' } });
 const upload = multer({ storage: storage });
 
-// 3. Upload Image Proxy
+// Helper: Robust Multi-ID Identity Matcher
+function getSearchIds(userId) {
+    if (!userId) return [];
+    const rawId = userId.toString().trim();
+    const cleanId = rawId.replace(/\+/g, '').replace(/^0/, '').replace(/^92/, '').trim();
+    return [rawId, cleanId, `0${cleanId}`, `92${cleanId}`, `+92${cleanId}`, `+${cleanId}`];
+}
+
+// --- 2. RESTORED: Image Upload Proxy ---
 router.post('/upload-image', (req, res, next) => {
     upload.single('image')(req, res, (err) => {
-        if (err instanceof multer.MulterError) {
-            console.error("❌ Multer Error:", err.message);
-            return res.status(400).json({ success: false, message: `Multer Error: ${err.message}` });
-        } else if (err) {
-            console.error("❌ Unknown Upload Error:", err.message);
-            return res.status(500).json({ success: false, message: `Upload Error: ${err.message}` });
-        }
-
-        try {
-            console.log("📸 Image upload request received");
-            if (!req.file) {
-                console.error("❌ No file in request");
-                return res.status(400).json({ success: false, message: "No file uploaded" });
-            }
-            console.log(`✅ File uploaded to Cloudinary: ${req.file.path}`);
-            res.json({ success: true, url: req.file.path });
-        } catch (e) {
-            console.error("❌ Cloudinary Callback Error:", e.message);
-            res.status(500).json({ success: false, message: e.message });
-        }
+        if (err) return res.status(500).json({ success: false, message: "Upload Error" });
+        if (!req.file) return res.status(400).json({ success: false, message: "No file" });
+        res.json({ success: true, url: req.file.path });
     });
 });
 
-// 6. Register Driver in RTDB (With Duplicate Checks)
+// --- 3. RESTORED: Driver Registration with Duplicate Checks ---
 router.post('/register-driver', async (req, res) => {
     try {
         const { userId, vehicleInfo, documents, isOwner } = req.body;
         const cleanId = userId.toString().replace(/\+/g, '').trim();
-        const cnicNumber = documents.cnicNumber || documents.cnic; // Support both names
+        const cnicNumber = documents.cnic;
         const plateNumber = vehicleInfo.numberPlate;
-
-        console.log(`🚖 Registering driver: ${cleanId}, CNIC: ${cnicNumber}, Plate: ${plateNumber}`);
 
         const db = admin.database();
         const usersRef = db.ref('users');
-
-        // --- DUPLICATE CHECK: CNIC & Number Plate ---
         const allUsersSnap = await usersRef.get();
         const allUsers = allUsersSnap.val() || {};
 
         for (const uid in allUsers) {
-            if (uid === cleanId) continue; // Skip current user
-
+            if (uid === cleanId) continue;
             const user = allUsers[uid];
-
-            // Check CNIC Duplicate
-            if (cnicNumber && user.cnic === cnicNumber) {
-                console.warn(`❌ Duplicate CNIC found: ${cnicNumber} belongs to ${uid}`);
-                return res.status(400).json({
-                    success: false,
-                    message: "Error: This CNIC number is already registered with another account."
-                });
-            }
-
-            // Check License Plate Duplicate
-            if (plateNumber && user.vehicleInfo?.numberPlate === plateNumber) {
-                console.warn(`❌ Duplicate Plate found: ${plateNumber} belongs to ${uid}`);
-                return res.status(400).json({
-                    success: false,
-                    message: "Error: This vehicle registration number is already in use."
-                });
-            }
+            if (cnicNumber && user.cnic === cnicNumber) return res.status(400).json({ success: false, message: "CNIC already registered" });
+            if (plateNumber && user.vehicleInfo?.numberPlate === plateNumber) return res.status(400).json({ success: false, message: "Vehicle already registered" });
         }
 
-        // --- SAVE TO DATABASE ---
         const userRef = db.ref(`users/${cleanId}`);
-        const userSnap = await userRef.get();
-        const userProfile = userSnap.val() || {};
+        const userProfile = (await userRef.get()).val() || {};
 
-        const updates = {
-            driverRegistered: true,
-            driverVerificationStatus: 'pending',
-            isOwner: isOwner !== undefined ? isOwner : true,
-            vehicleInfo: vehicleInfo,
-            cnic: cnicNumber,
-            registrationNote: documents.registrationNote || "", // Explicitly save note at root
-            ...documents
-        };
+        const updates = { driverRegistered: true, driverVerificationStatus: 'pending', isOwner, vehicleInfo, cnic: cnicNumber, ...documents };
 
-        // --- WELCOME BONUS FOR DRIVERS ONLY (Ensuring it's applied) ---
-        if (userProfile.welcomeBonusApplied !== true) {
-            const configSnap = await db.ref('admin_config/settings').get();
-            const config = configSnap.val() || {};
-            const welcomeBonus = Number(config.welcome_bonus_amount) || 0;
-
-            if (welcomeBonus > 0) {
-                console.log(`🎁 Applying Welcome Bonus: Rs.${welcomeBonus} to Driver ${cleanId}`);
-                updates.walletBalance = (Number(userProfile.walletBalance) || 0) + welcomeBonus;
+        // Welcome Bonus Logic (Drivers Only)
+        if (!userProfile.welcomeBonusApplied) {
+            const config = (await db.ref('admin_config/settings').get()).val() || {};
+            const bonus = Number(config.welcome_bonus_amount) || 0;
+            if (bonus > 0) {
+                updates.walletBalance = (Number(userProfile.walletBalance) || 0) + bonus;
                 updates.welcomeBonusApplied = true;
-
-                // Record in MongoDB
-                try {
-                    await new Transaction({
-                        userId: cleanId,
-                        title: "Driver Welcome Bonus",
-                        amount: welcomeBonus,
-                        type: "CREDIT",
-                        category: "BONUS",
-                        status: "COMPLETED",
-                        timestamp: Date.now()
-                    }).save();
-                } catch (tErr) { console.error("❌ Transaction Log Error:", tErr.message); }
+                await new Transaction({ userId: cleanId, title: "Welcome Bonus", amount: bonus, type: "CREDIT", category: "BONUS" }).save();
             }
         }
-
         await userRef.update(updates);
-        console.log(`✅ Driver ${cleanId} registered with note and bonus checked.`);
-
         res.json({ success: true });
-    } catch (e) {
-        console.error("❌ Driver Registration Error:", e.message);
-        res.status(500).json({ success: false, message: "Server Error: " + e.message });
-    }
+    } catch (e) { res.status(500).json({ message: e.message }); }
 });
 
-// Helper: Aggressive ID Filter (Last 10 digits)
-function getIdentityFilter(userId) {
-    if (!userId) return null;
-    const digits = userId.toString().replace(/\D/g, '').slice(-10);
-    return new RegExp(digits + '$');
-}
-
-// Routes
+// --- 4. Profile & History Routes ---
 router.get('/profile/:userId', async (req, res) => {
     try {
         const cleanId = req.params.userId.replace(/\+/g, '').trim();
-        const snapshot = await admin.database().ref(`users/${cleanId}`).get();
-        if (snapshot.exists()) res.json(snapshot.val());
+        const snap = await admin.database().ref(`users/${cleanId}`).get();
+        if (snap.exists()) res.json(snap.val());
         else res.status(404).send("Not found");
     } catch(e) { res.status(500).send(e.message); }
 });
 
 router.get('/transactions/:userId', async (req, res) => {
     try {
-        const regex = getIdentityFilter(req.params.userId);
-        const transactions = await Transaction.find({ userId: regex }).sort({ timestamp: -1 }).limit(20);
-        res.json(transactions);
+        const searchIds = getSearchIds(req.params.userId);
+        const list = await Transaction.find({ userId: { $in: searchIds } }).sort({ timestamp: -1 }).limit(20);
+        res.json(list);
     } catch (e) { res.status(500).send(e.message); }
 });
 
 router.get('/summary/:userId', async (req, res) => {
     try {
-        const regex = getIdentityFilter(req.params.userId);
-        const now = new Date();
-        const startOfDay = new Date(now.setHours(0,0,0,0)).getTime();
-        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-
-        const daily = await Transaction.aggregate([{ $match: { userId: regex, category: 'RIDE_INCOME', timestamp: { $gte: startOfDay } } }, { $group: { _id: null, total: { $sum: "$amount" } } }]);
-        const monthly = await Transaction.aggregate([{ $match: { userId: regex, category: 'RIDE_INCOME', timestamp: { $gte: startOfMonth } } }, { $group: { _id: null, total: { $sum: "$amount" } } }]);
-        const topups = await Transaction.aggregate([{ $match: { userId: regex, category: 'TOPUP' } }, { $group: { _id: null, total: { $sum: "$amount" } } }]);
-
-        res.json({ todayEarnings: daily[0]?.total || 0, monthlyEarnings: monthly[0]?.total || 0, totalTopups: topups[0]?.total || 0 });
+        const searchIds = getSearchIds(req.params.userId);
+        const startOfDay = new Date().setHours(0,0,0,0);
+        const daily = await Transaction.aggregate([{ $match: { userId: { $in: searchIds }, category: 'RIDE_INCOME', timestamp: { $gte: startOfDay } } }, { $group: { _id: null, total: { $sum: "$amount" } } }]);
+        const monthly = await Transaction.aggregate([{ $match: { userId: { $in: searchIds }, category: 'RIDE_INCOME', timestamp: { $gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime() } } }, { $group: { _id: null, total: { $sum: "$amount" } } }]);
+        res.json({ todayEarnings: daily[0]?.total || 0, monthlyEarnings: monthly[0]?.total || 0 });
     } catch (e) { res.status(500).send(e.message); }
 });
 
 router.post('/review', async (req, res) => {
     try {
         const data = req.body;
-        // 1. Mandatory Save to MongoDB
-        await new Review({
-            rideId: data.rideId || "MANUAL", reviewerId: data.reviewerId, reviewerName: data.reviewerName,
-            reviewerPhoto: data.reviewerPhoto, targetUserId: data.targetUserId, rating: Number(data.rating),
-            comment: data.comment || "", compliments: data.compliments || [], role: data.role || "Passenger",
-            timestamp: Date.now()
-        }).save();
-
-        // 2. Update RTDB Aggregates
+        await new Review({ ...data, timestamp: Date.now() }).save();
         const cleanId = data.targetUserId.toString().replace(/\+/g, '').trim();
         const ref = admin.database().ref(`users/${cleanId}`);
-        const snap = await ref.get();
-        if (snap.exists()) {
-            const p = snap.val();
+        const p = (await ref.get()).val();
+        if (p) {
             const isDriver = data.role === "Passenger";
-            const fieldPrefix = isDriver ? "driver" : "passenger";
-            const count = (p[`${fieldPrefix}ReviewCount`] || 0) + 1;
-            const newRating = ((p[`${fieldPrefix}Rating`] || 5.0) * (count - 1) + data.rating) / count;
-            await ref.update({ [`${fieldPrefix}ReviewCount`]: count, [`${fieldPrefix}Rating`]: newRating });
+            const prefix = isDriver ? "driver" : "passenger";
+            const count = (p[`${prefix}ReviewCount`] || 0) + 1;
+            const newRating = ((p[`${prefix}Rating`] || 5.0) * (count - 1) + data.rating) / count;
+            await ref.update({ [`${prefix}ReviewCount`]: count, [`${prefix}Rating`]: newRating });
         }
         res.json({ success: true });
     } catch (e) { res.status(500).send(e.message); }
@@ -199,9 +117,9 @@ router.post('/review', async (req, res) => {
 
 router.get('/reviews/:userId', async (req, res) => {
     try {
-        const regex = getIdentityFilter(req.params.userId);
-        const reviews = await Review.find({ targetUserId: regex }).sort({ timestamp: -1 }).limit(20);
-        res.json(reviews);
+        const searchIds = getSearchIds(req.params.userId);
+        const list = await Review.find({ targetUserId: { $in: searchIds } }).sort({ timestamp: -1 }).limit(20);
+        res.json(list);
     } catch (e) { res.status(500).send(e.message); }
 });
 
