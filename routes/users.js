@@ -12,6 +12,45 @@ cloudinary.config({ cloud_name: process.env.CLOUDINARY_CLOUD_NAME, api_key: proc
 const storage = new CloudinaryStorage({ cloudinary: cloudinary, params: { folder: 'chalo_docs', format: async () => 'jpg' } });
 const upload = multer({ storage: storage });
 
+// 3. Upload Image Proxy
+router.post('/upload-image', upload.single('image'), async (req, res) => {
+    try {
+        console.log("📸 Image upload request received");
+        if (!req.file) {
+            console.error("❌ No file in request");
+            return res.status(400).json({ success: false, message: "No file uploaded" });
+        }
+        console.log(`✅ File uploaded to Cloudinary: ${req.file.path}`);
+        res.json({ success: true, url: req.file.path });
+    } catch (e) {
+        console.error("❌ Cloudinary Upload Proxy Error:", e.message);
+        res.status(500).json({ success: false, message: e.message });
+    }
+});
+
+// 6. Register Driver in RTDB
+router.post('/register-driver', async (req, res) => {
+    try {
+        const { userId, vehicleInfo, documents } = req.body;
+        const cleanId = userId.toString().replace(/\+/g, '').trim();
+
+        console.log(`🚖 Registering driver: ${cleanId}`);
+
+        const db = admin.database();
+        await db.ref(`users/${cleanId}`).update({
+            driverRegistered: true,
+            driverVerificationStatus: 'pending',
+            vehicleInfo,
+            ...documents
+        });
+
+        res.json({ success: true });
+    } catch (e) {
+        console.error("❌ Driver Registration Error:", e.message);
+        res.status(500).json({ message: e.message });
+    }
+});
+
 // Helper: Aggressive ID Filter (Last 10 digits)
 function getIdentityFilter(userId) {
     if (!userId) return null;
