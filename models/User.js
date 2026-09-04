@@ -12,7 +12,7 @@ const UserSchema = new mongoose.Schema({
     phone: { type: String, unique: true, required: true },
     name: { type: String, default: "" },
     role: { type: String, enum: ['Driver', 'Passenger', 'Admin'], default: 'Passenger' },
-    walletBalance: { type: Number, default: 50 },
+    walletBalance: { type: Number, default: 0 },
     gender: { type: String, default: "" },
     dateOfBirth: { type: String, default: "" },
     profilePhoto: { type: String, default: "" },

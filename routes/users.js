@@ -57,12 +57,23 @@ router.post('/register-driver', async (req, res) => {
 
         // Welcome Bonus Logic (Drivers Only)
         if (!userProfile.welcomeBonusApplied) {
-            const config = (await db.ref('admin_config/settings').get()).val() || {};
-            const bonus = Number(config.welcome_bonus_amount) || 0;
+            const configSnap = await db.ref('admin_config/settings').get();
+            const config = configSnap.val() || {};
+            // Provide a default fallback of 300 if not set in Firebase
+            const bonus = Number(config.welcome_bonus_amount) || 300;
+
             if (bonus > 0) {
                 updates.walletBalance = (Number(userProfile.walletBalance) || 0) + bonus;
                 updates.welcomeBonusApplied = true;
-                await new Transaction({ userId: cleanId, title: "Welcome Bonus", amount: bonus, type: "CREDIT", category: "BONUS" }).save();
+                await new Transaction({
+                    userId: cleanId,
+                    title: "Driver Welcome Bonus",
+                    amount: bonus,
+                    type: "CREDIT",
+                    category: "BONUS",
+                    timestamp: Date.now()
+                }).save();
+                console.log(`🎁 Driver ${cleanId} received Rs.${bonus} Welcome Bonus.`);
             }
         }
         await userRef.update(updates);
