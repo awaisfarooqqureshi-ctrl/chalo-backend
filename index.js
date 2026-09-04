@@ -87,12 +87,14 @@ io.on('connection', (socket) => {
     console.log(`New client connected: ${socket.id} (User: ${userId})`);
 
     socket.on('update_location', async (data) => {
-        if (data.userId && data.lat && data.lon) {
+        if (data.userId && data.lat && (data.lon || data.lng)) {
             const cleanId = data.userId.replace('+', '').trim();
+            const longitude = data.lon || data.lng;
 
-            // H3 Precision 7 (~1.2km hexagons) - Best balance for discovery
-            const hexAddr = h3.latLngToCell(data.lat, data.lon, 7);
-            const updatedData = { ...data, userId: cleanId, h3Index: hexAddr };
+            // H3 Precision 7 (~1.2km hexagons)
+            const hexAddr = h3.latLngToCell(data.lat, longitude, 7);
+            const updatedData = { ...data, userId: cleanId, lon: longitude, h3Index: hexAddr };
+            delete updatedData.lng; // Unified field name
 
             // a. Join the spatial room for this hexagon
             const oldRoom = socket.currentHexRoom;
