@@ -74,13 +74,20 @@ router.post('/update-status', async (req, res) => {
                             });
                             console.log(`✅ Counters updated for ${driverId}: Rides=${completedRides}, Today=Rs.${todayEarnings}`);
 
-                            // 3. BONUS LOGIC: Update progress for all active schemes
+                            // 3. BONUS LOGIC: Update progress for matching active schemes
                             const schemesSnap = await db.ref('bonus_schemes').get();
                             if (schemesSnap.exists()) {
                                 const schemes = schemesSnap.val();
+                                const rideVehicleType = (finalRideData.vehicleType || "Car").toLowerCase();
+                                const isBikeOrRiksha = rideVehicleType.includes("bike") || rideVehicleType.includes("riksha") || rideVehicleType.includes("rickshaw");
+                                const currentRideGroup = isBikeOrRiksha ? "BIKE_RIKSHAW" : "CAR";
+
                                 for (const sId in schemes) {
                                     const scheme = schemes[sId];
-                                    if (scheme.isActive) {
+                                    const schemeGroup = scheme.vehicleGroup || "ALL";
+
+                                    // CRITICAL: Only update if vehicle groups match
+                                    if (scheme.isActive && (schemeGroup === "ALL" || schemeGroup === currentRideGroup)) {
                                         const progressRef = db.ref(`driver_bonus_progress/${driverId}/${sId}`);
                                         const progSnap = await progressRef.get();
                                         let currentProgress = progSnap.exists() ? (progSnap.val().currentProgress || 0) : 0;
