@@ -130,17 +130,19 @@ router.post('/accept-bid', async (req, res) => {
         const acceptedOffer = Object.values(ride.offers || {}).find(o => o.id === offerId || o.driverId === driverId);
         if (!acceptedOffer) return res.status(404).send("Offer not found");
 
-        const commissionAmount = (acceptedOffer.bidFare * commissionRate) / 100;
+        const commissionAmount = Math.round((acceptedOffer.bidFare * commissionRate) / 100 * 100) / 100;
 
         // 1. Deduct from RTDB
-        await driverRef.update({ walletBalance: (driver.walletBalance || 0) - commissionAmount, driverStatus: 'ON_CITY_RIDE' });
+        const currentBalance = (driver.walletBalance || 0);
+        const newBalance = Math.round((currentBalance - commissionAmount) * 100) / 100;
+        await driverRef.update({ walletBalance: newBalance, driverStatus: 'ON_CITY_RIDE' });
 
         // 2. Save Commission to MongoDB
         try {
             await new Transaction({
                 userId: driverId,
                 title: "Ride Commission",
-                amount: parseFloat(commissionAmount),
+                amount: commissionAmount,
                 type: "DEBIT",
                 category: "COMMISSION",
                 status: "COMPLETED",

@@ -59,11 +59,11 @@ router.post('/register-driver', async (req, res) => {
         if (!userProfile.welcomeBonusApplied) {
             const configSnap = await db.ref('admin_config/settings').get();
             const config = configSnap.val() || {};
-            // Provide a default fallback of 300 if not set in Firebase
-            const bonus = Number(config.welcome_bonus_amount) || 300;
+            const bonus = Math.round((Number(config.welcome_bonus_amount) || 300) * 100) / 100;
 
             if (bonus > 0) {
-                updates.walletBalance = (Number(userProfile.walletBalance) || 0) + bonus;
+                const currentBalance = (Number(userProfile.walletBalance) || 0);
+                updates.walletBalance = Math.round((currentBalance + bonus) * 100) / 100;
                 updates.welcomeBonusApplied = true;
                 await new Transaction({
                     userId: cleanId,
