@@ -112,41 +112,43 @@ router.get('/summary/:userId', async (req, res) => {
 router.post('/review', async (req, res) => {
     try {
         const data = req.body;
-        console.log(`📝 Review Submission: From=${data.reviewerId} To=${data.targetUserId}, Role=${data.role}`);
+        const targetId = data.targetUserId.toString().replace(/\+/g, '').trim();
+        const reviewerId = data.reviewerId.toString().replace(/\+/g, '').trim();
+        const role = (data.role || "Passenger").toLowerCase();
 
-        // 1. Mandatory Save to MongoDB
-        const mongoRole = (data.role || "Passenger").charAt(0).toUpperCase() + (data.role || "Passenger").slice(1).toLowerCase();
+        // 1. Save to MongoDB (Separate Collection)
+        const mongoRole = role.charAt(0).toUpperCase() + role.slice(1);
         await new Review({
             ...data,
+            targetUserId: targetId,
+            reviewerId: reviewerId,
             role: mongoRole === "Driver" || mongoRole === "Passenger" ? mongoRole : "Passenger",
             rideId: data.rideId || "MANUAL",
             timestamp: Date.now()
         }).save();
-        console.log(`✅ Review saved to MongoDB as role: ${mongoRole}`);
 
-        // 2. Update RTDB Aggregates
-        const cleanId = data.targetUserId.toString().replace(/\+/g, '').trim();
-        const ref = admin.database().ref(`users/${cleanId}`);
+        // 2. EMBED IN RIDE DOCUMENT (Google AI Recommendation)
+        if (data.rideId && data.rideId !== "MANUAL") {
+            const reviewField = (role === "passenger") ? "driverReview" : "passengerReview";
+            await MongoRide.findOneAndUpdate(
+                { id: data.rideId },
+                { [reviewField]: { rating: data.rating, comment: data.comment || "", createdAt: new Date() } }
+            );
+        }
+
+        // 3. Update RTDB Aggregate Rating
+        const ref = admin.database().ref(`users/${targetId}`);
         const snapshot = await ref.get();
 
         if (snapshot.exists()) {
             const p = snapshot.val();
-            // If reviewer is Passenger, target is Driver
-            const isTargetDriver = (data.role || "").toLowerCase() === "passenger";
-            const prefix = isTargetDriver ? "driver" : "passenger";
+            const prefix = (role === "passenger") ? "driver" : "passenger";
 
-            const oldCount = Number(p[`${prefix}ReviewCount`]) || 0;
-            const oldRating = Number(p[`${prefix}Rating`]) || 5.0;
+            const count = (Number(p[`${prefix}ReviewCount`]) || 0) + 1;
+            const newRating = Math.round(((Number(p[`${prefix}Rating`] || 5.0) * (count - 1)) + Number(data.rating)) / count * 10) / 10;
 
-            const newCount = oldCount + 1;
-            const newRating = Math.round(((oldRating * oldCount) + Number(data.rating)) / newCount * 10) / 10;
-
-            const updates = {};
-            updates[`${prefix}ReviewCount`] = newCount;
-            updates[`${prefix}Rating`] = newRating;
-
-            await ref.update(updates);
-            console.log(`⭐ RTDB Aggregate Updated for ${cleanId}: ${prefix}Rating=${newRating}, Count=${newCount}`);
+            await ref.update({ [`${prefix}ReviewCount`]: count, [`${prefix}Rating`]: newRating });
+            console.log(`⭐ Updated ${prefix} rating for ${targetId}`);
         }
         res.json({ success: true });
     } catch (e) {

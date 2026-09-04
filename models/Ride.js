@@ -56,7 +56,19 @@ const RideSchema = new mongoose.Schema({
     seatsBooked: { type: Number, default: 1 },
 
     timestamp: { type: Number, default: () => Date.now() },
-    lastPing: { type: Number, default: () => Date.now() }
+    lastPing: { type: Number, default: () => Date.now() },
+
+    // --- ADDED: EMBEDDED REVIEWS (Google AI Recommended) ---
+    passengerReview: {
+        rating: { type: Number, default: 0 },
+        comment: { type: String, default: "" },
+        createdAt: { type: Date }
+    },
+    driverReview: {
+        rating: { type: Number, default: 0 },
+        comment: { type: String, default: "" },
+        createdAt: { type: Date }
+    }
 }, { timestamps: true });
 
 module.exports = mongoose.model('Ride', RideSchema);
