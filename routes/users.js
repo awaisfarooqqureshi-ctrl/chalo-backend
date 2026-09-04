@@ -88,13 +88,14 @@ router.post('/register-driver', async (req, res) => {
             driverRegistered: true,
             driverVerificationStatus: 'pending',
             isOwner: isOwner !== undefined ? isOwner : true,
-            vehicleInfo,
-            cnic: cnicNumber, // Store at root for easy filtering/checks
+            vehicleInfo: vehicleInfo,
+            cnic: cnicNumber,
+            registrationNote: documents.registrationNote || "", // Explicitly save note at root
             ...documents
         };
 
-        // --- WELCOME BONUS FOR DRIVERS ONLY ---
-        if (!userProfile.welcomeBonusApplied) {
+        // --- WELCOME BONUS FOR DRIVERS ONLY (Ensuring it's applied) ---
+        if (userProfile.welcomeBonusApplied !== true) {
             const configSnap = await db.ref('admin_config/settings').get();
             const config = configSnap.val() || {};
             const welcomeBonus = Number(config.welcome_bonus_amount) || 0;
@@ -115,13 +116,12 @@ router.post('/register-driver', async (req, res) => {
                         status: "COMPLETED",
                         timestamp: Date.now()
                     }).save();
-                } catch (tErr) {
-                    console.error("❌ Welcome Bonus Transaction Log Failed:", tErr.message);
-                }
+                } catch (tErr) { console.error("❌ Transaction Log Error:", tErr.message); }
             }
         }
 
         await userRef.update(updates);
+        console.log(`✅ Driver ${cleanId} registered with note and bonus checked.`);
 
         res.json({ success: true });
     } catch (e) {
