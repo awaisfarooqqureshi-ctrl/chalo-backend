@@ -26,151 +26,193 @@ router.post('/request', async (req, res) => {
     } catch (e) { res.status(500).send(e.message); }
 });
 
-// 2. Update Status: Archive to MongoDB + Accounting
+// 2. Update Status: Archive to MongoDB + Accounting + Cancellation Hits
 router.post('/update-status', async (req, res) => {
     try {
-        const { rideId, status } = req.body;
+        const { rideId, status, cancelledBy } = req.body; // cancelledBy: 'passenger' or 'driver'
+        console.log(`🔄 Status Update Attempt: Ride=${rideId}, NewStatus=${status}, By=${cancelledBy}`);
+
         const db = admin.database();
         const rideRef = db.ref(`active_rides/${rideId}`);
+
+        // Fetch current ride data BEFORE update/deletion
+        const rideSnap = await rideRef.get();
+        if (!rideSnap.exists()) return res.status(404).send("Ride not found");
+        const finalRideData = rideSnap.val();
+
         await rideRef.update({ status });
 
         if (['COMPLETED', 'RIDE_COMPLETED'].includes(status)) {
-            const snapshot = await rideRef.get();
-            if (snapshot.exists()) {
-                const finalRideData = snapshot.val();
-                const driverId = finalRideData.driverId;
-                const fare = finalRideData.offeredFare || 0;
+            const driverId = finalRideData.driverId;
+            const fare = finalRideData.offeredFare || 0;
 
-                if (driverId) {
-                    try {
-                        const driverRef = db.ref(`users/${driverId}`);
-                        const driverSnap = await driverRef.get();
-                        if (driverSnap.exists()) {
-                            const driver = driverSnap.val();
-                            const now = new Date();
-                            const currentMonth = now.getMonth();
+            if (driverId) {
+                try {
+                    const driverRef = db.ref(`users/${driverId}`);
+                    const driverSnap = await driverRef.get();
+                    if (driverSnap.exists()) {
+                        const driver = driverSnap.val();
+                        const now = new Date();
+                        const currentMonth = now.getMonth();
 
-                            // 1. Update Earnings
-                            let monthlyEarnings = (driver.lastEarningsResetMonth === currentMonth) ? (driver.monthlyEarnings || 0) + fare : fare;
+                        // 1. Update Earnings
+                        let monthlyEarnings = (driver.lastEarningsResetMonth === currentMonth) ? (driver.monthlyEarnings || 0) + fare : fare;
 
-                            // 2. Today's Earnings Logic (Reset if day changed)
-                            const startOfDay = new Date().setHours(0,0,0,0);
-                            let todayEarnings = (driver.lastEarningsResetDay >= startOfDay) ? (driver.todayEarnings || 0) + fare : fare;
+                        // 2. Today's Earnings Logic (Reset if day changed)
+                        const startOfDay = new Date().setHours(0,0,0,0);
+                        let todayEarnings = (driver.lastEarningsResetDay >= startOfDay) ? (driver.todayEarnings || 0) + fare : fare;
 
-                            // 3. Increment Ride Counters
-                            const totalRides = (driver.driverTotalRides || 0) + 1;
-                            const completedRides = (driver.driverCompletedRides || 0) + 1;
+                        // 3. Increment Ride Counters
+                        const totalRides = (driver.driverTotalRides || 0) + 1;
+                        const completedRides = (driver.driverCompletedRides || 0) + 1;
 
-                            await driverRef.update({
-                                todayEarnings,
-                                monthlyEarnings,
-                                lifetimeEarnings: (driver.lifetimeEarnings || 0) + fare,
-                                lastEarningsResetMonth: currentMonth,
-                                lastEarningsResetDay: Date.now(),
-                                driverTotalRides: totalRides,
-                                driverCompletedRides: completedRides,
-                                isOnline: true,
-                                driverStatus: 'AVAILABLE'
-                            });
-                            console.log(`✅ Counters updated for ${driverId}: Rides=${completedRides}, Today=Rs.${todayEarnings}`);
+                        await driverRef.update({
+                            todayEarnings,
+                            monthlyEarnings,
+                            lifetimeEarnings: (driver.lifetimeEarnings || 0) + fare,
+                            lastEarningsResetMonth: currentMonth,
+                            lastEarningsResetDay: Date.now(),
+                            driverTotalRides: totalRides,
+                            driverCompletedRides: completedRides,
+                            isOnline: true,
+                            driverStatus: 'AVAILABLE'
+                        });
+                        console.log(`✅ Counters updated for ${driverId}: Rides=${completedRides}, Today=Rs.${todayEarnings}`);
 
-                            // 3. BONUS LOGIC: Update progress for matching active schemes
-                            const schemesSnap = await db.ref('bonus_schemes').get();
-                            if (schemesSnap.exists()) {
-                                const schemes = schemesSnap.val();
-                                const rideVehicleType = (finalRideData.vehicleType || "Car").toLowerCase();
-                                const isBikeOrRiksha = rideVehicleType.includes("bike") || rideVehicleType.includes("riksha") || rideVehicleType.includes("rickshaw");
-                                const currentRideGroup = isBikeOrRiksha ? "BIKE_RIKSHAW" : "CAR";
+                        // 3. BONUS LOGIC: Update progress for matching active schemes
+                        const schemesSnap = await db.ref('bonus_schemes').get();
+                        if (schemesSnap.exists()) {
+                            const schemes = schemesSnap.val();
+                            const rideVehicleType = (finalRideData.vehicleType || "Car").toLowerCase();
+                            const isBikeOrRiksha = rideVehicleType.includes("bike") || rideVehicleType.includes("riksha") || rideVehicleType.includes("rickshaw");
+                            const currentRideGroup = isBikeOrRiksha ? "BIKE_RIKSHAW" : "CAR";
 
-                                for (const sId in schemes) {
-                                    const scheme = schemes[sId];
-                                    const schemeGroup = scheme.vehicleGroup || "ALL";
+                            for (const sId in schemes) {
+                                const scheme = schemes[sId];
+                                const schemeGroup = scheme.vehicleGroup || "ALL";
 
-                                    // CRITICAL: Only update if vehicle groups match
-                                    if (scheme.isActive && (schemeGroup === "ALL" || schemeGroup === currentRideGroup)) {
-                                        const progressRef = db.ref(`driver_bonus_progress/${driverId}/${sId}`);
-                                        const progSnap = await progressRef.get();
-                                        let currentProgress = progSnap.exists() ? (progSnap.val().currentProgress || 0) : 0;
-                                        let completionCount = progSnap.exists() ? (progSnap.val().completionCount || 0) : 0;
+                                if (scheme.isActive && (schemeGroup === "ALL" || schemeGroup === currentRideGroup)) {
+                                    const progressRef = db.ref(`driver_bonus_progress/${driverId}/${sId}`);
+                                    const progSnap = await progressRef.get();
+                                    let currentProgress = progSnap.exists() ? (progSnap.val().currentProgress || 0) : 0;
+                                    let completionCount = progSnap.exists() ? (progSnap.val().completionCount || 0) : 0;
 
-                                        let newProgress = currentProgress + 1;
+                                    let newProgress = currentProgress + 1;
 
-                                        if (newProgress >= scheme.target) {
-                                            // Goal Met! Pay out bonus
-                                            const reward = Number(scheme.reward);
-                                            const finalWallet = Math.round(((driver.walletBalance || 0) + reward) * 100) / 100;
-                                            await driverRef.update({ walletBalance: finalWallet });
+                                    if (newProgress >= scheme.target) {
+                                        const reward = Number(scheme.reward);
+                                        const finalWallet = Math.round(((driver.walletBalance || 0) + reward) * 100) / 100;
+                                        await driverRef.update({ walletBalance: finalWallet });
 
-                                            // Log Bonus Transaction
-                                            await new Transaction({
-                                                userId: driverId,
-                                                title: `Bonus: ${scheme.title}`,
-                                                amount: reward,
-                                                type: "CREDIT",
-                                                category: "BONUS",
-                                                status: "COMPLETED",
-                                                timestamp: Date.now()
-                                            }).save();
+                                        await new Transaction({
+                                            userId: driverId,
+                                            title: `Bonus: ${scheme.title}`,
+                                            amount: reward,
+                                            type: "CREDIT",
+                                            category: "BONUS",
+                                            status: "COMPLETED",
+                                            timestamp: Date.now()
+                                        }).save();
 
-                                            newProgress = 0; // Reset for next cycle
-                                            completionCount += 1;
-                                        }
-
-                                        await progressRef.set({
-                                            schemeId: sId,
-                                            currentProgress: newProgress,
-                                            completionCount: completionCount,
-                                            lastUpdated: Date.now()
-                                        });
+                                        newProgress = 0;
+                                        completionCount += 1;
                                     }
+
+                                    await progressRef.set({
+                                        schemeId: sId,
+                                        currentProgress: newProgress,
+                                        completionCount: completionCount,
+                                        lastUpdated: Date.now()
+                                    });
                                 }
                             }
-
-                            // 4. Log Income Transaction to MongoDB
-                            await new Transaction({
-                                userId: driverId,
-                                title: "Ride Income (Directly Received)",
-                                amount: parseFloat(fare),
-                                type: "CREDIT",
-                                category: "RIDE_INCOME",
-                                status: "COMPLETED",
-                                reference: rideId,
-                                timestamp: Date.now()
-                            }).save();
                         }
-                    } catch (accErr) { console.error("❌ Accounting/Bonus Error:", accErr.message); }
-                }
 
-                try {
-                    const mongoData = {
-                        ...finalRideData,
-                        id: rideId,
-                        status: 'COMPLETED',
-                        paymentStatus: 'PAID',
-                        offers: Object.values(finalRideData.offers || {})
-                    };
-                    if (mongoData.pickupLng && !mongoData.pickupLon) mongoData.pickupLon = mongoData.pickupLng;
-                    if (mongoData.destinationLng && !mongoData.destinationLon) mongoData.destinationLon = mongoData.destinationLng;
-
-                    await new MongoRide(mongoData).save();
-                    console.log(`✅ Ride ${rideId} archived to MongoDB`);
-                    await rideRef.remove();
-                } catch (mongoErr) { console.error("❌ MongoDB Archive Error:", mongoErr.message); }
+                        // 4. Log Income Transaction to MongoDB
+                        await new Transaction({
+                            userId: driverId,
+                            title: "Ride Income (Directly Received)",
+                            amount: parseFloat(fare),
+                            type: "CREDIT",
+                            category: "RIDE_INCOME",
+                            status: "COMPLETED",
+                            reference: rideId,
+                            timestamp: Date.now()
+                        }).save();
+                    }
+                } catch (accErr) { console.error("❌ Accounting/Bonus Error:", accErr.message); }
             }
+
+            try {
+                const mongoData = {
+                    ...finalRideData,
+                    id: rideId,
+                    status: 'COMPLETED',
+                    paymentStatus: 'PAID',
+                    offers: Object.values(finalRideData.offers || {})
+                };
+                if (mongoData.pickupLng && !mongoData.pickupLon) mongoData.pickupLon = mongoData.pickupLng;
+                if (mongoData.destinationLng && !mongoData.destinationLon) mongoData.destinationLon = mongoData.destinationLng;
+
+                await new MongoRide(mongoData).save();
+                console.log(`✅ Ride ${rideId} archived to MongoDB`);
+                await rideRef.remove();
+            } catch (mongoErr) { console.error("❌ MongoDB Archive Error:", mongoErr.message); }
+
         } else if (['CANCELLED', 'RIDE_CANCELLED'].includes(status)) {
-            const snapshot = await rideRef.get();
-            if (snapshot.exists()) {
-                const data = snapshot.val();
-                try {
-                    await new MongoRide({ ...data, id: rideId, status: 'CANCELLED', offers: Object.values(data.offers || {}) }).save();
-                    await rideRef.remove();
-                } catch (e) { console.error("❌ Cancel Archive Error:", e.message); }
+            // --- UPDATED: CANCELLATION HITS LOGIC (Audit Ready) ---
+            const passengerId = finalRideData.passengerId;
+            const driverId = finalRideData.driverId;
+
+            if (cancelledBy === 'passenger' && passengerId) {
+                const pRef = db.ref(`users/${passengerId}`);
+                const pSnap = await pRef.get();
+                if (pSnap.exists()) {
+                    const p = pSnap.val();
+                    const now = Date.now();
+                    let count = (p.passengerCancellationCount || 0);
+                    // Reset count if last cancel was > 1 hour ago
+                    if (now - (p.lastCancellationTimestamp || 0) > 3600000) count = 0;
+
+                    await pRef.update({
+                        passengerCancellationCount: count + 1,
+                        lastCancellationTimestamp: now
+                    });
+                    console.log(`📉 Passenger Cancellation Hit recorded for ${passengerId}`);
+                }
+            } else if (cancelledBy === 'driver' && driverId) {
+                const dRef = db.ref(`users/${driverId}`);
+                const dSnap = await dRef.get();
+                if (dSnap.exists()) {
+                    const d = dSnap.val();
+                    const hits = (Number(d.cancellationHits) || 0) + 1;
+                    await dRef.update({
+                        cancellationHits: hits,
+                        isOnline: true,
+                        driverStatus: 'AVAILABLE'
+                    });
+                    console.log(`📉 Driver Cancellation Hit recorded for ${driverId}. Total Hits: ${hits}`);
+                }
             }
+
+            try {
+                await new MongoRide({
+                    ...finalRideData,
+                    id: rideId,
+                    status: 'CANCELLED',
+                    offers: Object.values(finalRideData.offers || {})
+                }).save();
+                await rideRef.remove();
+            } catch (e) { console.error("❌ Cancel Archive Error:", e.message); }
         }
+
         const io = req.app.get('socketio');
         if (io) io.emit(`ride_status_updated_${rideId}`, { status });
         res.json({ success: true });
-    } catch (e) { res.status(500).send(e.message); }
+    } catch (e) {
+        console.error("❌ Status Update Route Error:", e.message);
+        res.status(500).send(e.message);
+    }
 });
 
 // 3. Bid
