@@ -24,9 +24,10 @@ try {
         const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
         admin.initializeApp({
             credential: admin.credential.cert(serviceAccount),
-            databaseURL: dbUrl
+            databaseURL: dbUrl,
+            projectId: serviceAccount.project_id // Force project alignment
         });
-        console.log("✅ Firebase Admin: Using Explicit JSON Key");
+        console.log(`✅ Firebase Admin: Using Explicit JSON for ${serviceAccount.project_id}`);
     } else {
         // Option 2: Cloud Native Auth (ADC)
         admin.initializeApp({

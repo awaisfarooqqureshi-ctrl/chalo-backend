@@ -94,11 +94,8 @@ router.post('/verify-otp-veevo', async (req, res) => {
             userData = userSnap.val();
         }
 
-        // ABSOLUTE FIX: Explicitly setting the audience/project ID to resolve mismatch errors
-        const firebaseToken = await admin.auth().createCustomToken(cleanPhone, {
-            iss: "firebase-adminsdk-fbsvc@chalodrive-app.iam.gserviceaccount.com",
-            aud: "chalodrive-app"
-        });
+        // Reverting to stable token creation - the previous manual override caused a 500 error
+        const firebaseToken = await admin.auth().createCustomToken(cleanPhone);
         const token = jwt.sign({ userId: cleanPhone }, CHALO_SECRET);
 
         res.json({ token, userId: cleanPhone, user: userData, firebaseToken, message: "Success" });
