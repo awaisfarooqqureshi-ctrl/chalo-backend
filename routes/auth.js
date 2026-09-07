@@ -29,7 +29,7 @@ router.post('/send-otp-veevo', async (req, res) => {
     console.log(`✉️ Dispatching OTP to: ${cleanPhone}`);
 
     try {
-        await axios.get(SMS_CONFIG.baseUrl, {
+        const response = await axios.get(SMS_CONFIG.baseUrl, {
             params: {
                 id: SMS_CONFIG.id,
                 pass: SMS_CONFIG.pass,
@@ -39,19 +39,22 @@ router.post('/send-otp-veevo', async (req, res) => {
                 type: 'json',
                 lang: 'english'
             },
-            timeout: 10000
+            timeout: 25000 // Increased timeout for external API calls
         });
 
+        console.log("📡 SMS Gateway Response:", JSON.stringify(response.data));
+
         // SAVE OTP TO FIREBASE RTDB
-        await admin.database().ref(`temp_otps/${cleanPhone}`).set({
+        const db = admin.database();
+        await db.ref(`temp_otps/${cleanPhone}`).set({
             otp: otpCode,
             timestamp: Date.now()
         });
 
         res.json({ success: true, message: "OTP Sent Successfully" });
     } catch (error) {
-        console.error("❌ SMS Gateway Error:", error.message);
-        res.status(500).json({ success: false, message: "SMS Gateway Unreachable" });
+        console.error("❌ SMS Gateway / Database Error:", error.message);
+        res.status(500).json({ success: false, message: `OTP Error: ${error.message}` });
     }
 });
 
