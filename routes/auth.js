@@ -3,9 +3,9 @@ const router = express.Router();
 const axios = require('axios');
 const jwt = require('jsonwebtoken');
 const admin = require('firebase-admin');
-const AdminModel = require('../models/Admin');
+const bcrypt = require('bcryptjs');
 
-// --- FASTSMSALERTS.COM CONFIGURATION (Secrets from .env) ---
+// --- FASTSMSALERTS.COM CONFIGURATION ---
 const SMS_CONFIG = {
     id: process.env.FASTSMS_ID,
     pass: process.env.FASTSMS_PASS,
@@ -20,17 +20,16 @@ router.post('/send-otp-veevo', async (req, res) => {
     let { phone } = req.body;
     if (!phone) return res.status(400).json({ success: false, message: "Phone required" });
 
-    // Clean number to strictly digits (923001234567)
     const cleanPhone = phone.replace(/\D/g, '').trim();
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // RE-INVENTED TEMPLATE: Including <#> prefix which is often mandatory for auto-detection
+    // RE-INVENTED TEMPLATE
     const message = `<#> Your Chalo App OTP is: ${otpCode}. bdGiWfgWrVy`;
 
-    console.log(`✉️ Dispatching SMS to: ${cleanPhone} using FastSMS Gateway...`);
+    console.log(`✉️ Dispatching OTP to: ${cleanPhone}`);
 
     try {
-        const response = await axios.get(SMS_CONFIG.baseUrl, {
+        await axios.get(SMS_CONFIG.baseUrl, {
             params: {
                 id: SMS_CONFIG.id,
                 pass: SMS_CONFIG.pass,
@@ -40,58 +39,42 @@ router.post('/send-otp-veevo', async (req, res) => {
                 type: 'json',
                 lang: 'english'
             },
-            timeout: 30000 // 30 seconds timeout to prevent hanging
+            timeout: 10000
         });
-        console.log("📡 Gateway API Response:", JSON.stringify(response.data));
 
-        const isSuccess = response.data && (response.data.status === "success" || response.data.message_id || (typeof response.data === 'string' && response.data.includes("Successfully")));
+        // SAVE OTP TO FIREBASE RTDB
+        await admin.database().ref(`temp_otps/${cleanPhone}`).set({
+            otp: otpCode,
+            timestamp: Date.now()
+        });
 
-        if (isSuccess || response.status === 200) {
-            // SAVE OTP TO FIREBASE RTDB
-            const db = admin.database();
-            await db.ref(`temp_otps/${cleanPhone}`).set({
-                otp: otpCode,
-                timestamp: Date.now()
-            });
-
-            console.log(`✅ OTP ${otpCode} successfully saved in DB for ${cleanPhone}`);
-            res.json({ success: true, message: "OTP Sent Successfully" });
-        } else {
-            console.error("❌ Gateway Refused SMS:", response.data);
-            res.status(400).json({ success: false, message: "Gateway Refused SMS", gatewayResponse: response.data });
-        }
+        res.json({ success: true, message: "OTP Sent Successfully" });
     } catch (error) {
         console.error("❌ SMS Gateway Error:", error.message);
         res.status(500).json({ success: false, message: "SMS Gateway Unreachable" });
     }
 });
 
-// 2. Verify OTP & Create User in RTDB (Optimized for Rewards)
+// 2. Verify OTP & Create User in RTDB
 router.post('/verify-otp-veevo', async (req, res) => {
     let { phone, otp } = req.body;
     const cleanPhone = phone.replace(/\D/g, '').trim();
 
     try {
-        const db = admin.database();
-        const otpRef = db.ref(`temp_otps/${cleanPhone}`);
+        const otpRef = admin.database().ref(`temp_otps/${cleanPhone}`);
         const snapshot = await otpRef.get();
 
         if (!snapshot.exists() || snapshot.val().otp !== otp) {
             return res.status(400).json({ success: false, message: "Invalid OTP" });
         }
 
-        // Delete OTP after use
         await otpRef.remove();
 
-        // 1. Fetch System Config (No bonus at signup anymore)
-
-        // 2. Check if user exists in RTDB
-        const userRef = db.ref(`users/${cleanPhone}`);
+        const userRef = admin.database().ref(`users/${cleanPhone}`);
         const userSnap = await userRef.get();
         let userData;
 
         if (!userSnap.exists()) {
-            console.log(`🆕 Creating brand new user: ${cleanPhone}`);
             userData = {
                 uid: cleanPhone,
                 phoneNumber: phone,
@@ -100,10 +83,8 @@ router.post('/verify-otp-veevo', async (req, res) => {
                 walletBalance: 0,
                 accountStatus: "active",
                 driverRegistered: false,
-                driverVerificationStatus: "not_submitted",
                 welcomeBonusApplied: false,
-                createdAt: Date.now(),
-                transactions: {}
+                createdAt: Date.now()
             };
             await userRef.set(userData);
         } else {
@@ -113,60 +94,45 @@ router.post('/verify-otp-veevo', async (req, res) => {
         const firebaseToken = await admin.auth().createCustomToken(cleanPhone);
         const token = jwt.sign({ userId: cleanPhone }, CHALO_SECRET);
 
-        res.json({
-            token,
-            userId: cleanPhone,
-            user: userData,
-            firebaseToken,
-            message: "Success"
-        });
+        res.json({ token, userId: cleanPhone, user: userData, firebaseToken, message: "Success" });
     } catch (e) {
-        console.error("❌ Login Verification Error:", e.message);
         res.status(500).send("Login failed");
     }
 });
 
 /**
- * 3. Dashboard Admin Login (Email/Password)
+ * 3. Dashboard Admin Login (Firestore Powered)
  */
 router.post('/admin/login', async (req, res) => {
     const { email, password } = req.body;
     try {
-        const adminUser = await AdminModel.findOne({ email });
-        if (!adminUser || !adminUser.isActive) {
+        const fs = admin.firestore();
+        const adminSnap = await fs.collection('admins').where('email', '==', email).limit(1).get();
+
+        if (adminSnap.empty) {
             return res.status(401).json({ success: false, message: "Invalid credentials" });
         }
 
-        const isMatch = await adminUser.comparePassword(password);
-        if (!isMatch) {
-            return res.status(401).json({ success: false, message: "Invalid credentials" });
-        }
+        const adminDoc = adminSnap.docs[0];
+        const adminUser = adminDoc.data();
 
-        adminUser.lastLogin = Date.now();
-        await adminUser.save();
+        if (!adminUser.isActive) return res.status(401).json({ success: false, message: "Account inactive" });
+
+        const isMatch = await bcrypt.compare(password, adminUser.password);
+        if (!isMatch) return res.status(401).json({ success: false, message: "Invalid credentials" });
+
+        await adminDoc.ref.update({ lastLogin: Date.now() });
 
         const accessToken = jwt.sign(
-            { userId: adminUser._id, email: adminUser.email, role: adminUser.role, isAdmin: true },
+            { userId: adminDoc.id, email: adminUser.email, role: adminUser.role, isAdmin: true },
             CHALO_SECRET,
             { expiresIn: '24h' }
-        );
-
-        const refreshToken = jwt.sign(
-            { userId: adminUser._id, isAdmin: true },
-            process.env.REFRESH_TOKEN_SECRET || 'chalo_refresh_secret',
-            { expiresIn: '7d' }
         );
 
         res.json({
             success: true,
             accessToken,
-            refreshToken,
-            admin: {
-                id: adminUser._id,
-                name: adminUser.name,
-                email: adminUser.email,
-                role: adminUser.role
-            }
+            admin: { id: adminDoc.id, name: adminUser.name, email: adminUser.email, role: adminUser.role }
         });
     } catch (e) {
         res.status(500).json({ success: false, message: e.message });
@@ -174,59 +140,31 @@ router.post('/admin/login', async (req, res) => {
 });
 
 /**
- * 4. Refresh Admin Token
- */
-router.post('/admin/refresh-token', async (req, res) => {
-    const { refreshToken } = req.body;
-    if (!refreshToken) return res.status(401).json({ success: false, message: "Refresh token required" });
-
-    try {
-        const decoded = jwt.verify(refreshToken, process.env.REFRESH_TOKEN_SECRET || 'chalo_refresh_secret');
-        const adminUser = await AdminModel.findById(decoded.userId);
-
-        if (!adminUser || !adminUser.isActive) {
-            return res.status(403).json({ success: false, message: "Invalid or inactive admin" });
-        }
-
-        const newAccessToken = jwt.sign(
-            { userId: adminUser._id, email: adminUser.email, role: adminUser.role, isAdmin: true },
-            CHALO_SECRET,
-            { expiresIn: '1h' }
-        );
-
-        res.json({ success: true, accessToken: newAccessToken });
-    } catch (e) {
-        res.status(403).json({ success: false, message: "Invalid or expired refresh token" });
-    }
-});
-
-/**
- * 4. Initial Admin Setup (One-time use to create first SUPER_ADMIN)
+ * 4. Initial Admin Setup (One-time)
  */
 router.post('/admin/setup-initial', async (req, res) => {
     const { name, email, password, secretKey } = req.body;
 
-    // Only allow if no admins exist or with a special environment key
     if (secretKey !== process.env.ADMIN_SETUP_KEY && secretKey !== "chalo_setup_2026") {
-        return res.status(403).json({ success: false, message: "Unauthorized setup attempt" });
+        return res.status(403).json({ success: false, message: "Unauthorized" });
     }
 
     try {
-        const existing = await AdminModel.findOne({ email });
-        if (existing) return res.status(400).json({ success: false, message: "Admin already exists" });
+        const fs = admin.firestore();
+        const existing = await fs.collection('admins').where('email', '==', email).get();
+        if (!existing.empty) return res.status(400).json({ success: false, message: "Already exists" });
 
-        const newAdmin = new AdminModel({
-            name,
-            email,
-            password,
-            role: 'SUPER_ADMIN'
+        const hashedPassword = await bcrypt.hash(password, 10);
+        await fs.collection('admins').add({
+            name, email, password: hashedPassword, role: 'SUPER_ADMIN', isActive: true, createdAt: Date.now()
         });
 
-        await newAdmin.save();
-        res.json({ success: true, message: "Master Admin created successfully" });
+        res.json({ success: true, message: "Master Admin created in Firestore" });
     } catch (e) {
         res.status(500).json({ success: false, message: e.message });
     }
 });
+
+module.exports = router;
 
 module.exports = router;
