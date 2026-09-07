@@ -83,6 +83,13 @@ router.post('/verify-otp-veevo', async (req, res) => {
 
         await otpRef.remove();
 
+        // --- DEBUG LOGS FOR TOKEN AUDIENCE ---
+        const currentApp = admin.app();
+        console.log(`🛠️ Token Generation Context:`);
+        console.log(`   - ProjectID: ${currentApp.options.projectId}`);
+        const cred = currentApp.options.credential;
+        console.log(`   - ServiceAccount: ${cred ? 'JSON Key Active' : 'Default/Native'}`);
+
         const userRef = db.ref(`users/${cleanPhone}`);
         const userSnap = await userRef.get();
         let userData;
@@ -104,11 +111,16 @@ router.post('/verify-otp-veevo', async (req, res) => {
             userData = userSnap.val();
         }
 
-        // Standard token creation
-        const firebaseToken = await admin.auth().createCustomToken(cleanPhone);
-        const token = jwt.sign({ userId: cleanPhone }, CHALO_SECRET);
-
-        res.json({ token, userId: cleanPhone, user: userData, firebaseToken, message: "Success" });
+        // Standard token creation with explicit error catching
+        try {
+            const firebaseToken = await admin.auth().createCustomToken(cleanPhone);
+            const token = jwt.sign({ userId: cleanPhone }, CHALO_SECRET);
+            console.log(`✅ Tokens generated successfully for ${cleanPhone}`);
+            res.json({ token, userId: cleanPhone, user: userData, firebaseToken, message: "Success" });
+        } catch (tokenErr) {
+            console.error("🔥 Firebase Custom Token Error:", tokenErr);
+            res.status(500).send(`Token error: ${tokenErr.message}`);
+        }
     } catch (e) {
         console.error("❌ Verify OTP Logic Error:", e); // Crucial for 500 debugging
         res.status(500).send(`Login failed: ${e.message}`);
