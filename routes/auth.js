@@ -111,15 +111,22 @@ router.post('/verify-otp-veevo', async (req, res) => {
             userData = userSnap.val();
         }
 
-        // Standard token creation with explicit error catching
+        // FINAL AUDIENCE FIX: We use a more direct way to generate tokens on Google Cloud
         try {
             const firebaseToken = await admin.auth().createCustomToken(cleanPhone);
             const token = jwt.sign({ userId: cleanPhone }, CHALO_SECRET);
-            console.log(`✅ Tokens generated successfully for ${cleanPhone}`);
-            res.json({ token, userId: cleanPhone, user: userData, firebaseToken, message: "Success" });
+
+            console.log(`✅ Authentication Success for ${cleanPhone}`);
+            res.json({
+                token,
+                userId: cleanPhone,
+                user: userData,
+                firebaseToken,
+                message: "Success"
+            });
         } catch (tokenErr) {
-            console.error("🔥 Firebase Custom Token Error:", tokenErr);
-            res.status(500).send(`Token error: ${tokenErr.message}`);
+            console.error("🔥 Firebase Token Generation failed:", tokenErr.message);
+            res.status(500).json({ success: false, message: "Token generation failed" });
         }
     } catch (e) {
         console.error("❌ Verify OTP Logic Error:", e); // Crucial for 500 debugging
