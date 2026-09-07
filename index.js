@@ -3,44 +3,39 @@ const cors = require('cors');
 const http = require('http');
 const { Server } = require('socket.io');
 const admin = require('firebase-admin');
-const mongoose = require('mongoose');
+// SCALE FIX: Removing MongoDB to save costs and move to Native Firestore
 const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
 const app = express();
 
-// 0. TRUST PROXY (Required for Railway/Cloud deployments to identify client IP)
+// 0. TRUST PROXY
 app.set('trust proxy', 1);
 
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
-// 1. DATABASE CONNECTIONS (Scale Optimization: Dual Database Architecture)
-const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://user:pass@cluster.mongodb.net/chalo";
-mongoose.connect(MONGO_URI)
-    .then(() => console.log("✅ MongoDB Atlas Connected (Cold Storage Ready)"))
-    .catch(err => console.error("❌ MongoDB Connection Error:", err.message));
-
+// 1. DATABASE INITIALIZATION (Native Google Cloud Auth)
 try {
+    const firebaseConfig = {
+        databaseURL: process.env.FIREBASE_DATABASE_URL || "https://chalodrive-app-default-rtdb.firebaseio.com"
+    };
+
     if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-        // Option A: Use JSON key from env (Local/Railway testing)
-        const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-        admin.initializeApp({
-            credential: admin.credential.cert(serviceAccount),
-            databaseURL: process.env.FIREBASE_DATABASE_URL || "https://chalodrive-app-default-rtdb.firebaseio.com"
-        });
-        console.log("✅ Firebase Admin: Initialized via JSON Key");
+        firebaseConfig.credential = admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT));
+        console.log("✅ Firebase Admin: Using JSON Key");
     } else {
-        // Option B: Google Cloud Native Auth (Cloud Run Production)
-        // No keys needed! Cloud Run automatically inherits permissions.
-        admin.initializeApp({
-            credential: admin.credential.applicationDefault(),
-            databaseURL: process.env.FIREBASE_DATABASE_URL || "https://chalodrive-app-default-rtdb.firebaseio.com"
-        });
-        console.log("✅ Firebase Admin: Initialized via Cloud Native Identity");
+        // Option B: Google Cloud Native Auth (Cloud Run)
+        firebaseConfig.credential = admin.credential.applicationDefault();
+        console.log("✅ Firebase Admin: Using Cloud Native Identity");
     }
+
+    admin.initializeApp(firebaseConfig);
+    // Initialize Firestore
+    global.db_fs = admin.firestore();
+    console.log("🔥 Cloud Firestore Initialized (Primary Storage)");
 } catch (error) {
-    console.error("❌ Firebase Initialization Error:", error.message);
+    console.error("❌ Firebase/Firestore Init Error:", error.message);
 }
 
 // 2. SCALE OPTIMIZATION: Rate Limiting
