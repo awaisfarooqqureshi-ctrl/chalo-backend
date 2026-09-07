@@ -23,12 +23,21 @@ mongoose.connect(MONGO_URI)
 
 try {
     if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+        // Option A: Use JSON key from env (Local/Railway testing)
         const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
         admin.initializeApp({
             credential: admin.credential.cert(serviceAccount),
-            databaseURL: "https://indrive-d69e1-default-rtdb.firebaseio.com"
+            databaseURL: process.env.FIREBASE_DATABASE_URL || "https://chalodrive-app-default-rtdb.firebaseio.com"
         });
-        console.log("✅ Firebase Admin Initialized (Active Database)");
+        console.log("✅ Firebase Admin: Initialized via JSON Key");
+    } else {
+        // Option B: Google Cloud Native Auth (Cloud Run Production)
+        // No keys needed! Cloud Run automatically inherits permissions.
+        admin.initializeApp({
+            credential: admin.credential.applicationDefault(),
+            databaseURL: process.env.FIREBASE_DATABASE_URL || "https://chalodrive-app-default-rtdb.firebaseio.com"
+        });
+        console.log("✅ Firebase Admin: Initialized via Cloud Native Identity");
     }
 } catch (error) {
     console.error("❌ Firebase Initialization Error:", error.message);
