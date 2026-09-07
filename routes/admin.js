@@ -62,16 +62,19 @@ router.post('/approve-driver', async (req, res) => {
         const title = status === 'approved' ? "Verification Approved! 🎉" : "Registration Rejected";
         const message = notes || (status === 'approved' ? "Welcome to Chalo! Your driver account is now active." : "Please check your profile for details on why your registration was rejected.");
 
-        // A. Save to MongoDB Notification History
+        // A. Save to Firestore Notification History
         try {
-            const notif = new Notification({
+            const fs = admin.firestore();
+            await fs.collection('notifications').add({
                 userId: cleanId,
                 title,
                 message,
-                type: status === 'approved' ? 'SYSTEM' : 'REJECTION'
+                type: status === 'approved' ? 'SYSTEM' : 'REJECTION',
+                isRead: false,
+                timestamp: Date.now()
             });
-            await notif.save();
-        } catch (mErr) { console.error("❌ MongoDB Notif Save Failed:", mErr.message); }
+            console.log(`✅ Firestore notification recorded for ${cleanId}`);
+        } catch (mErr) { console.error("❌ Firestore Notif Save Failed:", mErr.message); }
 
         // B. Send Real-time Push Notification via FCM
         try {
