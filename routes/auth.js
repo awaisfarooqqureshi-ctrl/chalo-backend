@@ -23,8 +23,8 @@ router.post('/send-otp-veevo', async (req, res) => {
     const cleanPhone = phone.replace(/\D/g, '').trim();
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // RE-INVENTED TEMPLATE (Matched with your new App Hash Key)
-    const message = `<#> Your Chalo App OTP is: ${otpCode}. L7Ur+8Z2MWo`;
+    // CLEAN TEMPLATE (No Hashtags to avoid PTA Spam Filters)
+    const message = `Your Chalo App OTP is: ${otpCode}. L7Ur+8Z2MWo`;
 
     console.log(`✉️ Dispatching OTP to: ${cleanPhone}`);
 
