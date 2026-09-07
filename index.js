@@ -17,29 +17,25 @@ const io = new Server(server, { cors: { origin: "*" } });
 
 // 1. DATABASE INITIALIZATION (Hybrid Auth)
 try {
-    let dbUrl = process.env.FIREBASE_DATABASE_URL || "https://chalodrive-app-default-rtdb.firebaseio.com";
-    // SCALE FIX: Remove trailing slash which can cause auth scoping issues
-    dbUrl = dbUrl.replace(/\/$/, "");
+    let dbUrl = (process.env.FIREBASE_DATABASE_URL || "https://chalodrive-app-default-rtdb.firebaseio.com").replace(/\/$/, "");
 
-    if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-        // Option 1: Explicit Service Account JSON (Universal Fix)
-        const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-        admin.initializeApp({
-            credential: admin.credential.cert(serviceAccount),
-            databaseURL: dbUrl,
-            projectId: serviceAccount.project_id // Force project alignment
-        });
-        console.log(`✅ Firebase Admin: Using Explicit JSON for ${serviceAccount.project_id}`);
-    } else {
-        // Option 2: Cloud Native Auth (ADC)
-        admin.initializeApp({
-            credential: admin.credential.applicationDefault(),
-            databaseURL: dbUrl
-        });
-        console.log("✅ Firebase Admin: Using ADC");
+    if (!admin.apps.length) {
+        if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+            const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+            admin.initializeApp({
+                credential: admin.credential.cert(serviceAccount),
+                databaseURL: dbUrl
+            });
+            console.log(`✅ Firebase Admin: Using Explicit JSON for ${serviceAccount.project_id}`);
+        } else {
+            admin.initializeApp({
+                credential: admin.credential.applicationDefault(),
+                databaseURL: dbUrl
+            });
+            console.log("✅ Firebase Admin: Using ADC");
+        }
     }
 
-    // Global references
     global.db_fs = admin.firestore();
     console.log("🔥 Cloud Firestore Ready");
 } catch (error) {
