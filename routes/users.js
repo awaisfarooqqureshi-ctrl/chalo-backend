@@ -142,13 +142,22 @@ router.post('/review', async (req, res) => {
 
         if (snapshot.exists()) {
             const p = snapshot.val();
-            const prefix = (role === "passenger") ? "driver" : "passenger";
+            // If reviewer is Passenger, target is Driver
+            const isTargetDriver = (role === "passenger");
+            const prefix = isTargetDriver ? "driver" : "passenger";
 
-            const count = (Number(p[`${prefix}ReviewCount`]) || 0) + 1;
-            const newRating = Math.round(((Number(p[`${prefix}Rating`] || 5.0) * (count - 1)) + Number(data.rating)) / count * 10) / 10;
+            const oldCount = Number(p[`${prefix}ReviewCount`]) || 0;
+            const oldRating = Number(p[`${prefix}Rating`]) || 5.0;
 
-            await ref.update({ [`${prefix}ReviewCount`]: count, [`${prefix}Rating`]: newRating });
-            console.log(`⭐ Updated ${prefix} rating for ${targetId}`);
+            const newCount = oldCount + 1;
+            const newRating = Math.round(((oldRating * oldCount) + Number(data.rating)) / newCount * 10) / 10;
+
+            const updates = {};
+            updates[`${prefix}ReviewCount`] = newCount;
+            updates[`${prefix}Rating`] = newRating;
+
+            await ref.update(updates);
+            console.log(`⭐ RTDB Aggregate Updated for ${targetId}: ${prefix}Rating=${newRating}, Count=${newCount}`);
         }
         res.json({ success: true });
     } catch (e) {
