@@ -1,13 +1,19 @@
-FROM node:20
+# 1. Use a lightweight Node.js image
+FROM node:20-slim
 
-WORKDIR /app
+# 2. Create app directory
+WORKDIR /usr/src/app
 
+# 3. Install app dependencies
+# Copying package-lock.json for faster and consistent installs
 COPY package*.json ./
+RUN npm install --production
 
-RUN npm install
-
+# 4. Bundle app source
 COPY . .
 
+# 5. Expose the port (Cloud Run uses PORT env var)
 EXPOSE 8080
 
-CMD ["node", "index.js"]
+# 6. Start the server
+CMD [ "node", "index.js" ]
