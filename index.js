@@ -29,15 +29,17 @@ try {
         const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
         admin.initializeApp({
             credential: admin.credential.cert(serviceAccount),
-            databaseURL: dbUrl
+            databaseURL: dbUrl,
+            projectId: serviceAccount.project_id // EXPLICITLY SET PROJECT ID
         });
         console.log(`✅ Firebase Admin: Initialized for Project: ${serviceAccount.project_id}`);
     } else {
         admin.initializeApp({
             credential: admin.credential.applicationDefault(),
-            databaseURL: dbUrl
+            databaseURL: dbUrl,
+            projectId: "chalodrive-app" // FALLBACK PROJECT ID
         });
-        console.log("✅ Firebase Admin: Initialized via Default Identity");
+        console.log("✅ Firebase Admin: Initialized via ADC");
     }
 
     global.db_fs = admin.firestore();
