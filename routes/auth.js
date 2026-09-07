@@ -64,7 +64,8 @@ router.post('/verify-otp-veevo', async (req, res) => {
     const cleanPhone = phone.replace(/\D/g, '').trim();
 
     try {
-        const otpRef = admin.database().ref(`temp_otps/${cleanPhone}`);
+        const db = admin.database();
+        const otpRef = db.ref(`temp_otps/${cleanPhone}`);
         const snapshot = await otpRef.get();
 
         if (!snapshot.exists() || snapshot.val().otp !== otp) {
@@ -73,7 +74,7 @@ router.post('/verify-otp-veevo', async (req, res) => {
 
         await otpRef.remove();
 
-        const userRef = admin.database().ref(`users/${cleanPhone}`);
+        const userRef = db.ref(`users/${cleanPhone}`);
         const userSnap = await userRef.get();
         let userData;
 
@@ -94,13 +95,14 @@ router.post('/verify-otp-veevo', async (req, res) => {
             userData = userSnap.val();
         }
 
-        // Reverting to stable token creation - the previous manual override caused a 500 error
+        // Standard token creation
         const firebaseToken = await admin.auth().createCustomToken(cleanPhone);
         const token = jwt.sign({ userId: cleanPhone }, CHALO_SECRET);
 
         res.json({ token, userId: cleanPhone, user: userData, firebaseToken, message: "Success" });
     } catch (e) {
-        res.status(500).send("Login failed");
+        console.error("❌ Verify OTP Logic Error:", e); // Crucial for 500 debugging
+        res.status(500).send(`Login failed: ${e.message}`);
     }
 });
 

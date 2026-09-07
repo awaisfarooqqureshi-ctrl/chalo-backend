@@ -17,7 +17,9 @@ const io = new Server(server, { cors: { origin: "*" } });
 
 // 1. DATABASE INITIALIZATION (Hybrid Auth)
 try {
-    const dbUrl = process.env.FIREBASE_DATABASE_URL || "https://chalodrive-app-default-rtdb.firebaseio.com";
+    let dbUrl = process.env.FIREBASE_DATABASE_URL || "https://chalodrive-app-default-rtdb.firebaseio.com";
+    // SCALE FIX: Remove trailing slash which can cause auth scoping issues
+    dbUrl = dbUrl.replace(/\/$/, "");
 
     if (process.env.FIREBASE_SERVICE_ACCOUNT) {
         // Option 1: Explicit Service Account JSON (Universal Fix)
