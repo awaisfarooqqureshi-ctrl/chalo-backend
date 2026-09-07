@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const admin = require('firebase-admin');
-const Notification = require('../models/Notification');
 
 /**
  * PRODUCTION ADMIN ROUTES

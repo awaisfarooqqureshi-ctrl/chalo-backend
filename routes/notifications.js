@@ -15,15 +15,17 @@ router.post('/send', async (req, res) => {
     try {
         const { userId, title, message, type } = req.body;
         const cleanId = userId.toString().replace(/\+/g, '').trim();
+        const fs = admin.firestore();
 
-        // A. Save to MongoDB for history
-        const notif = new Notification({
+        // A. Save to Firestore for history
+        await fs.collection('notifications').add({
             userId: cleanId,
             title,
             message,
-            type: type || 'GENERAL'
+            type: type || 'GENERAL',
+            isRead: false,
+            timestamp: Date.now()
         });
-        await notif.save();
 
         // B. Send Push Notification via FCM
         const db = admin.database();
@@ -48,14 +50,17 @@ router.post('/send', async (req, res) => {
 // 2. Get Notification History (Limited to 15)
 router.get('/:userId', async (req, res) => {
     try {
-        const rawId = req.params.userId;
-        const digits = rawId.replace(/\D/g, '').slice(-10);
-        const regex = new RegExp(digits + '$');
+        const cleanId = req.params.userId.replace(/\+/g, '').trim();
+        const fs = admin.firestore();
 
-        const history = await Notification.find({ userId: regex })
-            .sort({ timestamp: -1 })
-            .limit(15);
+        const snapshot = await fs.collection('notifications')
+            .where('userId', '==', cleanId)
+            .orderBy('timestamp', 'desc')
+            .limit(15)
+            .get();
 
+        const history = [];
+        snapshot.forEach(doc => history.push({ id: doc.id, ...doc.data() }));
         res.json(history);
     } catch (e) {
         res.status(500).send(e.message);
@@ -66,7 +71,8 @@ router.get('/:userId', async (req, res) => {
 router.post('/read', async (req, res) => {
     try {
         const { notificationId } = req.body;
-        await Notification.findByIdAndUpdate(notificationId, { isRead: true });
+        const fs = admin.firestore();
+        await fs.collection('notifications').doc(notificationId).update({ isRead: true });
         res.json({ success: true });
     } catch (e) {
         res.status(500).send(e.message);

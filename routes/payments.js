@@ -3,7 +3,6 @@ const router = express.Router();
 const axios = require('axios');
 const crypto = require('crypto');
 const admin = require('firebase-admin');
-const Transaction = require('../models/Transaction');
 
 // Detect Environment and Base URL
 const RAPID_ENV = (process.env.RAPID_ENVIRONMENT || 'SANDBOX').toUpperCase();
@@ -35,12 +34,12 @@ async function updateBalance(userId, amount, basketId) {
     if (!userId || !amount || !basketId) return;
     try {
         const cleanId = userId.toString().replace(/[.$#[\]]/g, '').trim();
+        const fs = admin.firestore();
 
-        // 1. Check if this transaction was already processed in MongoDB (Idempotency)
-        // This prevents double-crediting if the success page is refreshed.
-        const alreadyProcessed = await Transaction.findOne({ reference: basketId });
-        if (alreadyProcessed) {
-            console.log(`⚠️ Payment ${basketId} already processed in MongoDB. Skipping.`);
+        // 1. Check if this transaction was already processed in Firestore (Idempotency)
+        const alreadyProcessed = await fs.collection('transactions').where('reference', '==', basketId).limit(1).get();
+        if (!alreadyProcessed.empty) {
+            console.log(`⚠️ Payment ${basketId} already processed in Firestore. Skipping.`);
             return;
         }
 
@@ -53,9 +52,9 @@ async function updateBalance(userId, amount, basketId) {
             return (parseFloat(current) || 0) + parseFloat(amount);
         });
 
-        // 3. Add Transaction Log to MongoDB History
+        // 3. Add Transaction Log to Firestore History
         try {
-            await new Transaction({
+            await fs.collection('transactions').add({
                 userId: cleanId,
                 title: "Wallet Top-up",
                 amount: parseFloat(amount),
@@ -64,10 +63,10 @@ async function updateBalance(userId, amount, basketId) {
                 status: "COMPLETED",
                 reference: basketId,
                 timestamp: Date.now()
-            }).save();
-            console.log(`✅ Success: Transaction archived to MongoDB for ${cleanId}`);
-        } catch (mongoErr) {
-            console.error("❌ MongoDB Transaction Archive Failed:", mongoErr.message);
+            });
+            console.log(`✅ Success: Transaction archived to Firestore for ${cleanId}`);
+        } catch (fsErr) {
+            console.error("❌ Firestore Transaction Archive Failed:", fsErr.message);
         }
 
     } catch (e) {
