@@ -15,30 +15,30 @@ app.set('trust proxy', 1);
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
-// 1. DATABASE INITIALIZATION (Native Google Cloud Auth)
+// 1. DATABASE INITIALIZATION (Hybrid Auth)
 try {
-    const firebaseConfig = {
-        databaseURL: process.env.FIREBASE_DATABASE_URL || "https://chalodrive-app-default-rtdb.firebaseio.com"
-    };
+    const dbUrl = process.env.FIREBASE_DATABASE_URL || "https://chalodrive-app-default-rtdb.firebaseio.com";
 
     if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-        firebaseConfig.credential = admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT));
-        console.log("✅ Firebase Admin: Using JSON Key");
+        // Option 1: Explicit Service Account JSON (Universal Fix)
+        const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+        admin.initializeApp({
+            credential: admin.credential.cert(serviceAccount),
+            databaseURL: dbUrl
+        });
+        console.log("✅ Firebase Admin: Using Explicit JSON Key");
     } else {
-        // Option B: Google Cloud Native Auth (Cloud Run)
-        // Explicitly specifying project ID can resolve credential scope issues
-        firebaseConfig.credential = admin.credential.applicationDefault();
-        console.log("✅ Firebase Admin: Using Cloud Native Identity (ADC)");
+        // Option 2: Cloud Native Auth (ADC)
+        admin.initializeApp({
+            credential: admin.credential.applicationDefault(),
+            databaseURL: dbUrl
+        });
+        console.log("✅ Firebase Admin: Using ADC");
     }
 
-    // Ensure we don't initialize twice during hot-reloads
-    if (!admin.apps.length) {
-        admin.initializeApp(firebaseConfig);
-    }
-
-    // Initialize Firestore
+    // Global references
     global.db_fs = admin.firestore();
-    console.log("🔥 Cloud Firestore Initialized");
+    console.log("🔥 Cloud Firestore Ready");
 } catch (error) {
     console.error("❌ Firebase/Firestore Init Error:", error.message);
 }
