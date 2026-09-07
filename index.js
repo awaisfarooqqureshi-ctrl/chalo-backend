@@ -15,31 +15,35 @@ app.set('trust proxy', 1);
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
-// 1. DATABASE INITIALIZATION (Hybrid Auth)
+// 1. DATABASE INITIALIZATION (Bulletproof Pattern)
 try {
     let dbUrl = (process.env.FIREBASE_DATABASE_URL || "https://chalodrive-app-default-rtdb.firebaseio.com").replace(/\/$/, "");
 
-    if (!admin.apps.length) {
-        if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-            const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-            admin.initializeApp({
-                credential: admin.credential.cert(serviceAccount),
-                databaseURL: dbUrl
-            });
-            console.log(`✅ Firebase Admin: Using Explicit JSON for ${serviceAccount.project_id}`);
-        } else {
-            admin.initializeApp({
-                credential: admin.credential.applicationDefault(),
-                databaseURL: dbUrl
-            });
-            console.log("✅ Firebase Admin: Using ADC");
-        }
+    // CRITICAL: Clear any existing apps to prevent credential mixing on Cloud Run
+    if (admin.apps.length > 0) {
+        admin.apps.forEach(app => app.delete());
+        console.log("🧹 Cleaned up existing Firebase instances");
+    }
+
+    if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+        const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+        admin.initializeApp({
+            credential: admin.credential.cert(serviceAccount),
+            databaseURL: dbUrl
+        });
+        console.log(`✅ Firebase Admin: Initialized for Project: ${serviceAccount.project_id}`);
+    } else {
+        admin.initializeApp({
+            credential: admin.credential.applicationDefault(),
+            databaseURL: dbUrl
+        });
+        console.log("✅ Firebase Admin: Initialized via Default Identity");
     }
 
     global.db_fs = admin.firestore();
     console.log("🔥 Cloud Firestore Ready");
 } catch (error) {
-    console.error("❌ Firebase/Firestore Init Error:", error.message);
+    console.error("❌ Firebase Init Error:", error.message);
 }
 
 // 2. SCALE OPTIMIZATION: Rate Limiting
