@@ -68,7 +68,16 @@ router.post('/verify-otp-veevo', async (req, res) => {
         const otpRef = db.ref(`temp_otps/${cleanPhone}`);
         const snapshot = await otpRef.get();
 
-        if (!snapshot.exists() || snapshot.val().otp !== otp) {
+        if (!snapshot.exists()) {
+            console.log(`❌ No OTP found in DB for ${cleanPhone}`);
+            return res.status(400).json({ success: false, message: "Invalid OTP (Not Found)" });
+        }
+
+        const dbOtp = snapshot.val().otp;
+        console.log(`🔍 Verification: Phone=${cleanPhone}, Input=${otp}, DB=${dbOtp}`);
+
+        if (dbOtp !== otp) {
+            console.log(`❌ OTP Mismatch for ${cleanPhone}`);
             return res.status(400).json({ success: false, message: "Invalid OTP" });
         }
 
