@@ -26,14 +26,19 @@ try {
         console.log("✅ Firebase Admin: Using JSON Key");
     } else {
         // Option B: Google Cloud Native Auth (Cloud Run)
+        // Explicitly specifying project ID can resolve credential scope issues
         firebaseConfig.credential = admin.credential.applicationDefault();
-        console.log("✅ Firebase Admin: Using Cloud Native Identity");
+        console.log("✅ Firebase Admin: Using Cloud Native Identity (ADC)");
     }
 
-    admin.initializeApp(firebaseConfig);
+    // Ensure we don't initialize twice during hot-reloads
+    if (!admin.apps.length) {
+        admin.initializeApp(firebaseConfig);
+    }
+
     // Initialize Firestore
     global.db_fs = admin.firestore();
-    console.log("🔥 Cloud Firestore Initialized (Primary Storage)");
+    console.log("🔥 Cloud Firestore Initialized");
 } catch (error) {
     console.error("❌ Firebase/Firestore Init Error:", error.message);
 }
