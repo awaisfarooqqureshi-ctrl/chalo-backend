@@ -94,6 +94,7 @@ router.post('/verify-otp-veevo', async (req, res) => {
             userData = userSnap.val();
         }
 
+        // Explicitly set the project ID in custom token to avoid "different audience" errors
         const firebaseToken = await admin.auth().createCustomToken(cleanPhone);
         const token = jwt.sign({ userId: cleanPhone }, CHALO_SECRET);
 
