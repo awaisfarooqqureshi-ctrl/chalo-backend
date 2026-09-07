@@ -1,18 +1,24 @@
 const express = require('express');
 const router = express.Router();
 const admin = require('firebase-admin');
-const Transaction = require('../models/Transaction');
-const Review = require('../models/Review');
 const multer = require('multer');
-const cloudinary = require('cloudinary').v2;
-const { CloudinaryStorage } = require('multer-storage-cloudinary');
+const { Storage } = require('@google-cloud/storage');
 
-// 1. Cloudinary Setup
-cloudinary.config({ cloud_name: process.env.CLOUDINARY_CLOUD_NAME, api_key: process.env.CLOUDINARY_API_KEY, api_secret: process.env.CLOUDINARY_API_SECRET });
-const storage = new CloudinaryStorage({ cloudinary: cloudinary, params: { folder: 'chalo_docs', format: async () => 'jpg' } });
-const upload = multer({ storage: storage });
+// 1. Google Cloud Storage Setup
+const storage = new Storage();
+const PUBLIC_BUCKET = process.env.GCS_PUBLIC_BUCKET || 'chalodrive-assets';
+const PRIVATE_BUCKET = process.env.GCS_PRIVATE_BUCKET || 'chalodrive-docs';
 
-// Helper: Robust Multi-ID Identity Matcher
+const publicBucket = storage.bucket(PUBLIC_BUCKET);
+const privateBucket = storage.bucket(PRIVATE_BUCKET);
+
+// 2. Multer Setup (Memory Storage for GCS Proxy)
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
+});
+
+// Helper: Standardized Clean ID for Firestore
 function getSearchIds(userId) {
     if (!userId) return [];
     const rawId = userId.toString().trim();
@@ -20,14 +26,51 @@ function getSearchIds(userId) {
     return [rawId, cleanId, `0${cleanId}`, `92${cleanId}`, `+92${cleanId}`, `+${cleanId}`];
 }
 
-// --- 2. RESTORED: Image Upload Proxy ---
-router.post('/upload-image', upload.single('image'), (req, res) => {
-    if (!req.file) {
-        console.error("❌ No file in request");
-        return res.status(400).json({ success: false, message: "No file uploaded" });
+function getCleanId(userId) {
+    if (!userId) return "";
+    return userId.toString().replace(/\+/g, '').trim();
+}
+
+// --- 2. Smart Image Upload Proxy (Dual Security) ---
+router.post('/upload-image', upload.single('image'), async (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ success: false, message: "No file" });
+
+        // DETERMINE DESTINATION: Is it a sensitive document?
+        const uploadType = req.body.type || 'PHOTO';
+        const isSensitive = uploadType === 'DOC' || uploadType === 'CNIC' || uploadType === 'LICENSE';
+
+        const targetBucket = isSensitive ? privateBucket : publicBucket;
+        const bucketName = isSensitive ? PRIVATE_BUCKET : PUBLIC_BUCKET;
+
+        const fileName = `${isSensitive ? 'documents' : 'uploads'}/${Date.now()}_${req.file.originalname.replace(/\s+/g, '_')}`;
+        const blob = targetBucket.file(fileName);
+
+        const blobStream = blob.createWriteStream({
+            resumable: false,
+            contentType: req.file.mimetype,
+            metadata: { cacheControl: 'public, max-age=31536000' }
+        });
+
+        blobStream.on('error', (err) => {
+            console.error("❌ GCS Upload Error:", err.message);
+            res.status(500).json({ success: false, message: err.message });
+        });
+
+        blobStream.on('finish', () => {
+            const resultUrl = isSensitive
+                ? `gs://${bucketName}/${fileName}`
+                : `https://storage.googleapis.com/${bucketName}/${fileName}`;
+
+            console.log(`✅ File uploaded to ${bucketName}: ${resultUrl}`);
+            res.json({ success: true, url: resultUrl });
+        });
+
+        blobStream.end(req.file.buffer);
+    } catch (e) {
+        console.error("🔥 Critical Upload Error:", e.message);
+        res.status(500).json({ success: false, message: e.message });
     }
-    console.log(`✅ File uploaded to Cloudinary: ${req.file.path}`);
-    res.json({ success: true, url: req.file.path });
 });
 
 // --- 3. RESTORED: Driver Registration with Duplicate Checks ---
