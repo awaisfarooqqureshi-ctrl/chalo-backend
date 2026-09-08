@@ -73,6 +73,36 @@ class DatabaseService {
             });
         }
     }
+
+    // --- NOTIFICATION OPERATIONS ---
+    async saveNotification(data) {
+        if (PROVIDER === 'FIRESTORE') {
+            return await this.db.collection('notifications').add({
+                ...data,
+                isRead: false,
+                timestamp: Date.now()
+            });
+        }
+    }
+
+    async getNotifications(userId) {
+        if (PROVIDER === 'FIRESTORE') {
+            const snapshot = await this.db.collection('notifications')
+                .where('userId', '==', userId)
+                .orderBy('timestamp', 'desc')
+                .limit(20)
+                .get();
+            const history = [];
+            snapshot.forEach(doc => history.push({ id: doc.id, ...doc.data() }));
+            return history;
+        }
+    }
+
+    async markNotificationRead(notifId) {
+        if (PROVIDER === 'FIRESTORE') {
+            await this.db.collection('notifications').doc(notifId).update({ isRead: true });
+        }
+    }
 }
 
 module.exports = new DatabaseService();

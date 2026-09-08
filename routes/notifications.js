@@ -1,29 +1,26 @@
 const express = require('express');
 const router = express.Router();
 const admin = require('firebase-admin');
+const DB = require('../services/db');
 
-// Helper: Identity filter for robust lookup
-function getIdentityFilter(userId) {
-    if (!userId) return null;
-    const digits = userId.toString().replace(/\D/g, '').slice(-10);
-    return new RegExp(digits + '$');
+// Helper: Standardized Clean ID
+function getCleanId(userId) {
+    if (!userId) return "";
+    return userId.toString().replace(/\+/g, '').trim();
 }
 
 // 1. Send Notification (Admin API)
 router.post('/send', async (req, res) => {
     try {
         const { userId, title, message, type } = req.body;
-        const cleanId = userId.toString().replace(/\+/g, '').trim();
-        const fs = admin.firestore();
+        const cleanId = getCleanId(userId);
 
-        // A. Save to Firestore for history
-        await fs.collection('notifications').add({
+        // A. Save via Portable DB Service
+        await DB.saveNotification({
             userId: cleanId,
             title,
             message,
-            type: type || 'GENERAL',
-            isRead: false,
-            timestamp: Date.now()
+            type: type || 'GENERAL'
         });
 
         // B. Send Push Notification via FCM
@@ -42,26 +39,18 @@ router.post('/send', async (req, res) => {
 
         res.json({ success: true, message: "Notification sent and archived" });
     } catch (e) {
+        console.error("❌ Send Notification Error:", e.message);
         res.status(500).send(e.message);
     }
 });
 
-// 2. Get Notification History (Limited to 15)
+// 2. Get Notification History
 router.get('/:userId', async (req, res) => {
     try {
-        const cleanId = req.params.userId.replace(/\+/g, '').trim();
-        const fs = admin.firestore();
-
-        const snapshot = await fs.collection('notifications')
-            .where('userId', '==', cleanId)
-            .orderBy('timestamp', 'desc')
-            .limit(15)
-            .get();
-
-        const history = [];
-        snapshot.forEach(doc => history.push({ id: doc.id, ...doc.data() }));
+        const history = await DB.getNotifications(getCleanId(req.params.userId));
         res.json(history);
     } catch (e) {
+        console.error("❌ Get Notifications Error:", e.message);
         res.status(500).send(e.message);
     }
 });
@@ -70,8 +59,7 @@ router.get('/:userId', async (req, res) => {
 router.post('/read', async (req, res) => {
     try {
         const { notificationId } = req.body;
-        const fs = admin.firestore();
-        await fs.collection('notifications').doc(notificationId).update({ isRead: true });
+        await DB.markNotificationRead(notificationId);
         res.json({ success: true });
     } catch (e) {
         res.status(500).send(e.message);
