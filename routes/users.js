@@ -86,12 +86,27 @@ router.post('/register-driver', async (req, res) => {
     }
 });
 
-// --- History & Summary ---
+// --- History & Summary (ULTRA ROBUST) ---
 router.get('/transactions/:userId', async (req, res) => {
     try {
-        const list = await DB.getTransactions(getCleanId(req.params.userId));
-        res.json(list);
-    } catch (e) { res.status(500).send(e.message); }
+        const userId = getCleanId(req.params.userId);
+        console.log(`🏦 Fetching transactions for: ${userId}`);
+
+        const list = await DB.getTransactions(userId);
+
+        // Ensure data is clean before sending to Android
+        const cleanList = list.map(t => ({
+            ...t,
+            id: t.id || Math.random().toString(36).substr(2, 9),
+            amount: Number(t.amount) || 0,
+            timestamp: Number(t.timestamp) || Date.now()
+        }));
+
+        res.json(cleanList);
+    } catch (e) {
+        console.error("🔥 Transaction API Error:", e.message);
+        res.json([]); // Return empty array instead of 500
+    }
 });
 
 router.get('/summary/:userId', async (req, res) => {
