@@ -49,6 +49,24 @@ async function seedDefaultConfig() {
             fares: defaultConfig.fares
         });
         await db.ref('bonus_schemes').set(defaultConfig.bonus_schemes);
+
+        // NEW: Seed a default admin if none exists
+        const fs = admin.firestore();
+        const adminCheck = await fs.collection('admins').limit(1).get();
+        if (adminCheck.empty) {
+            const bcrypt = require('bcryptjs');
+            const hashedPassword = await bcrypt.hash("admin123", 10);
+            await fs.collection('admins').add({
+                name: "System Admin",
+                email: "admin@chalodrive.app",
+                password: hashedPassword,
+                role: 'SUPER_ADMIN',
+                isActive: true,
+                createdAt: Date.now()
+            });
+            console.log("👤 Default Admin created: admin@chalodrive.app / admin123");
+        }
+
         console.log("✅ Successfully seeded default configuration to RTDB.");
     } catch (e) {
         console.error("❌ Seeding Failed:", e.message);

@@ -198,12 +198,32 @@ router.post('/accept-bid', async (req, res) => {
     } catch (e) { res.status(500).send(e.message); }
 });
 
-// 6. Get History
+// 6. Get History (Enhanced with Data Normalization)
 router.get('/history/:userId', async (req, res) => {
     try {
-        const history = await DB.getRideHistory(getCleanId(req.params.userId));
-        res.json(history);
-    } catch (e) { res.status(500).send(e.message); }
+        const userId = getCleanId(req.params.userId);
+        console.log(`📜 Fetching history for: ${userId}`);
+
+        const rawHistory = await DB.getRideHistory(userId);
+
+        // NORMALIZATION: Convert Map 'offers' to Array 'offers' to prevent Android crashes
+        const cleanHistory = rawHistory.map(ride => {
+            const cleanRide = { ...ride };
+            if (cleanRide.offers && !Array.isArray(cleanRide.offers)) {
+                // If it's a Firebase-style Map, convert to a list
+                cleanRide.offers = Object.values(cleanRide.offers);
+            } else if (!cleanRide.offers) {
+                cleanRide.offers = [];
+            }
+            return cleanRide;
+        });
+
+        console.log(`✅ History for ${userId}: Found ${cleanHistory.length} items`);
+        res.json(cleanHistory);
+    } catch (e) {
+        console.error("🔥 History API Error:", e.message);
+        res.status(500).send(`Server error: ${e.message}`);
+    }
 });
 
 module.exports = router;

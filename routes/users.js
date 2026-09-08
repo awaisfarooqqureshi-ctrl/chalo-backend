@@ -76,12 +76,8 @@ router.post('/register-driver', async (req, res) => {
         }
         await userRef.update(updates);
 
-        // Uses our new Portable Database Service
-        await DB.updateDriverRecord(cleanId, {
-            cnic: documents.cnic,
-            plate: vehicleInfo.numberPlate,
-            status: 'pending'
-        });
+        // CLEANUP: Removed Firestore duplicate driver record.
+        // We now rely solely on RTDB for active driver profiles.
 
         res.json({ success: true });
     } catch (e) {
