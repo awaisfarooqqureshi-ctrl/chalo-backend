@@ -43,6 +43,10 @@ try {
 
     global.db_fs = admin.firestore();
     console.log("🔥 Cloud Firestore Ready");
+
+    // NEW: Auto-seed configuration on startup if database is empty
+    const seedDefaultConfig = require('./services/seeder');
+    seedDefaultConfig();
 } catch (error) {
     console.error("❌ Firebase Init Error:", error.message);
 }
