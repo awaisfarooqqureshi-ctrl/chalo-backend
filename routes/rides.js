@@ -1,14 +1,15 @@
 const express = require('express');
 const router = express.Router();
 const admin = require('firebase-admin');
+const DB = require('../services/db');
 
-// Helper: Standardized Clean ID for Firestore Lookups
+// Helper: Standardized Clean ID
 function getCleanId(userId) {
     if (!userId) return "";
     return userId.toString().replace(/\+/g, '').trim();
 }
 
-// 1. Request Ride (Active in RTDB)
+// 1. Request Ride
 router.post('/request', async (req, res) => {
     try {
         const rideData = req.body;
@@ -20,18 +21,14 @@ router.post('/request', async (req, res) => {
         const io = req.app.get('socketio');
         if (io) io.emit('new_ride_request', rideWithId);
         res.status(201).json(rideWithId);
-    } catch (e) {
-        console.error("❌ Request Ride Error:", e.message);
-        res.status(500).send(e.message);
-    }
+    } catch (e) { res.status(500).send(e.message); }
 });
 
-// 2. Update Status: Archive to Cloud Firestore + Accounting + Cancellation Hits
+// 2. Update Status: Archive to Firestore + Accounting
 router.post('/update-status', async (req, res) => {
     try {
         const { rideId, status, cancelledBy } = req.body;
         const db = admin.database();
-        const fs = admin.firestore();
         const rideRef = db.ref(`active_rides/${rideId}`);
 
         const rideSnap = await rideRef.get();
@@ -69,18 +66,17 @@ router.post('/update-status', async (req, res) => {
                             driverStatus: 'AVAILABLE'
                         });
 
-                        // SAVE TRANSACTION TO FIRESTORE
-                        await fs.collection('transactions').add({
+                        // Log Income via DB Service
+                        await DB.addTransaction({
                             userId: getCleanId(driverId),
                             title: "Ride Income",
                             amount: fare,
                             type: "CREDIT",
                             category: "RIDE_INCOME",
-                            reference: rideId,
-                            timestamp: Date.now()
+                            reference: rideId
                         });
 
-                        // BONUS LOGIC: Update progress for matching active schemes
+                        // BONUS LOGIC
                         const schemesSnap = await db.ref('bonus_schemes').get();
                         if (schemesSnap.exists()) {
                             const schemes = schemesSnap.val();
@@ -105,13 +101,12 @@ router.post('/update-status', async (req, res) => {
                                         const finalWallet = Math.round(((driver.walletBalance || 0) + reward) * 100) / 100;
                                         await driverRef.update({ walletBalance: finalWallet });
 
-                                        await fs.collection('transactions').add({
+                                        await DB.addTransaction({
                                             userId: getCleanId(driverId),
                                             title: `Bonus: ${scheme.title}`,
                                             amount: reward,
                                             type: "CREDIT",
-                                            category: "BONUS",
-                                            timestamp: Date.now()
+                                            category: "BONUS"
                                         });
 
                                         newProgress = 0;
@@ -128,56 +123,25 @@ router.post('/update-status', async (req, res) => {
                             }
                         }
                     }
-                } catch (accErr) { console.error("❌ Firestore Accounting Error:", accErr.message); }
+                } catch (accErr) { console.error("❌ Accounting Error:", accErr.message); }
             }
 
-            // ARCHIVE RIDE TO FIRESTORE
+            // Archive to Firestore via Service
             try {
-                await fs.collection('rides').doc(rideId).set({
+                await DB.saveRide(rideId, {
                     ...finalRideData,
                     status: 'COMPLETED',
-                    paymentStatus: 'PAID',
-                    archivedAt: Date.now()
+                    paymentStatus: 'PAID'
                 });
                 await rideRef.remove();
-            } catch (fsErr) { console.error("❌ Firestore Archive Error:", fsErr.message); }
+            } catch (fsErr) { console.error("❌ Archive Error:", fsErr.message); }
 
         } else if (['CANCELLED', 'RIDE_CANCELLED'].includes(status)) {
-            const passengerId = finalRideData.passengerId;
-            const driverId = finalRideData.driverId;
-
-            if (cancelledBy === 'passenger' && passengerId) {
-                const pRef = db.ref(`users/${passengerId}`);
-                const pSnap = await pRef.get();
-                if (pSnap.exists()) {
-                    const p = pSnap.val();
-                    const now = Date.now();
-                    let count = (p.passengerCancellationCount || 0);
-                    if (now - (p.lastCancellationTimestamp || 0) > 3600000) count = 0;
-
-                    const newCount = count + 1;
-                    const updates = { passengerCancellationCount: newCount, lastCancellationTimestamp: now };
-
-                    if (newCount >= 5) {
-                        updates.tempBlockExpiry = now + 1800000;
-                        console.log(`🚫 Passenger ${passengerId} auto-blocked for 30 mins.`);
-                    }
-                    await pRef.update(updates);
-                }
-            } else if (cancelledBy === 'driver' && driverId) {
-                const dRef = db.ref(`users/${driverId}`);
-                const dSnap = await dRef.get();
-                if (dSnap.exists()) {
-                    const hits = (Number(dSnap.val().cancellationHits) || 0) + 1;
-                    await dRef.update({ cancellationHits: hits, isOnline: true, driverStatus: 'AVAILABLE' });
-                }
-            }
-
+            // Archive Cancelled via Service
             try {
-                await fs.collection('rides').doc(rideId).set({
+                await DB.saveRide(rideId, {
                     ...finalRideData,
-                    status: 'CANCELLED',
-                    archivedAt: Date.now()
+                    status: 'CANCELLED'
                 });
                 await rideRef.remove();
             } catch (e) {}
@@ -202,7 +166,6 @@ router.post('/accept-bid', async (req, res) => {
     try {
         const { rideId, offerId, driverId } = req.body;
         const db = admin.database();
-        const fs = admin.firestore();
         const rideRef = db.ref(`active_rides/${rideId}`);
         const driverRef = db.ref(`users/${driverId}`);
 
@@ -220,14 +183,13 @@ router.post('/accept-bid', async (req, res) => {
 
         await driverRef.update({ walletBalance: newBalance, driverStatus: 'ON_CITY_RIDE' });
 
-        await fs.collection('transactions').add({
+        await DB.addTransaction({
             userId: getCleanId(driverId),
             title: "Ride Commission",
             amount: commissionAmount,
             type: "DEBIT",
             category: "COMMISSION",
-            reference: rideId,
-            timestamp: Date.now()
+            reference: rideId
         });
 
         const updates = { status: 'ACCEPTED', driverId: driverId, driverName: driver.name, offeredFare: acceptedOffer.bidFare, commissionAmount, vehicleType: driver.vehicleInfo?.type || ride.vehicleType };
@@ -236,22 +198,10 @@ router.post('/accept-bid', async (req, res) => {
     } catch (e) { res.status(500).send(e.message); }
 });
 
-// 6. Get History (Firestore Fetch)
+// 6. Get History
 router.get('/history/:userId', async (req, res) => {
     try {
-        const cleanId = getCleanId(req.params.userId);
-        const fs = admin.firestore();
-
-        const [pSnap, dSnap] = await Promise.all([
-            fs.collection('rides').where('passengerId', '==', cleanId).orderBy('archivedAt', 'desc').limit(20).get(),
-            fs.collection('rides').where('driverId', '==', cleanId).orderBy('archivedAt', 'desc').limit(20).get()
-        ]);
-
-        const history = [];
-        pSnap.forEach(doc => history.push({ id: doc.id, ...doc.data() }));
-        dSnap.forEach(doc => history.push({ id: doc.id, ...doc.data() }));
-        history.sort((a, b) => b.archivedAt - a.archivedAt);
-
+        const history = await DB.getRideHistory(getCleanId(req.params.userId));
         res.json(history);
     } catch (e) { res.status(500).send(e.message); }
 });
