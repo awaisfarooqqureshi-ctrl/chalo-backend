@@ -19,13 +19,6 @@ const upload = multer({
 });
 
 // Helper: Standardized Clean ID for Firestore
-function getSearchIds(userId) {
-    if (!userId) return [];
-    const rawId = userId.toString().trim();
-    const cleanId = rawId.replace(/\+/g, '').replace(/^0/, '').replace(/^92/, '').trim();
-    return [rawId, cleanId, `0${cleanId}`, `92${cleanId}`, `+92${cleanId}`, `+${cleanId}`];
-}
-
 function getCleanId(userId) {
     if (!userId) return "";
     return userId.toString().replace(/\+/g, '').trim();
@@ -73,61 +66,61 @@ router.post('/upload-image', upload.single('image'), async (req, res) => {
     }
 });
 
-// --- 3. RESTORED: Driver Registration with Duplicate Checks ---
+// --- 3. Driver Registration (Firestore & RTDB Hybrid) ---
 router.post('/register-driver', async (req, res) => {
     try {
         const { userId, vehicleInfo, documents, isOwner } = req.body;
-        const cleanId = userId.toString().replace(/\+/g, '').trim();
-        const cnicNumber = documents.cnic;
-        const plateNumber = vehicleInfo.numberPlate;
-
+        const cleanId = getCleanId(userId);
         const db = admin.database();
-        const usersRef = db.ref('users');
-        const allUsersSnap = await usersRef.get();
-        const allUsers = allUsersSnap.val() || {};
+        const fs = admin.firestore();
 
-        for (const uid in allUsers) {
-            if (uid === cleanId) continue;
-            const user = allUsers[uid];
-            if (cnicNumber && user.cnic === cnicNumber) return res.status(400).json({ success: false, message: "CNIC already registered" });
-            if (plateNumber && user.vehicleInfo?.numberPlate === plateNumber) return res.status(400).json({ success: false, message: "Vehicle already registered" });
-        }
+        // Check duplicates in Firestore
+        const duplicateCnic = await fs.collection('drivers').where('cnic', '==', documents.cnic).get();
+        if (!duplicateCnic.empty) return res.status(400).json({ success: false, message: "CNIC already registered" });
 
         const userRef = db.ref(`users/${cleanId}`);
-        const userProfile = (await userRef.get()).val() || {};
+        const userSnap = await userRef.get();
+        const userProfile = userSnap.val() || {};
 
-        const updates = { driverRegistered: true, driverVerificationStatus: 'pending', isOwner, vehicleInfo, cnic: cnicNumber, ...documents };
+        const updates = { driverRegistered: true, driverVerificationStatus: 'pending', isOwner, vehicleInfo, cnic: documents.cnic, ...documents };
 
-        // Welcome Bonus Logic (Drivers Only)
+        // Welcome Bonus
         if (!userProfile.welcomeBonusApplied) {
-            const configSnap = await db.ref('admin_config/settings').get();
-            const config = configSnap.val() || {};
-            const bonus = Math.round((Number(config.welcome_bonus_amount) || 300) * 100) / 100;
+            const bonus = 300;
+            updates.walletBalance = Math.round(((Number(userProfile.walletBalance) || 0) + bonus) * 100) / 100;
+            updates.welcomeBonusApplied = true;
 
-            if (bonus > 0) {
-                const currentBalance = (Number(userProfile.walletBalance) || 0);
-                updates.walletBalance = Math.round((currentBalance + bonus) * 100) / 100;
-                updates.welcomeBonusApplied = true;
-                await new Transaction({
-                    userId: cleanId,
-                    title: "Driver Welcome Bonus",
-                    amount: bonus,
-                    type: "CREDIT",
-                    category: "BONUS",
-                    timestamp: Date.now()
-                }).save();
-                console.log(`🎁 Driver ${cleanId} received Rs.${bonus} Welcome Bonus.`);
-            }
+            await fs.collection('transactions').add({
+                userId: cleanId,
+                title: "Driver Welcome Bonus",
+                amount: bonus,
+                type: "CREDIT",
+                category: "BONUS",
+                timestamp: Date.now()
+            });
         }
         await userRef.update(updates);
+
+        // Also save a copy in Firestore for advanced indexing
+        await fs.collection('drivers').doc(cleanId).set({
+            userId: cleanId,
+            cnic: documents.cnic,
+            plate: vehicleInfo.numberPlate,
+            status: 'pending',
+            updatedAt: Date.now()
+        });
+
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ message: e.message }); }
+    } catch (e) {
+        console.error("❌ Driver Registration Error:", e.message);
+        res.status(500).json({ message: e.message });
+    }
 });
 
 // --- 4. Profile & History Routes ---
 router.get('/profile/:userId', async (req, res) => {
     try {
-        const cleanId = req.params.userId.replace(/\+/g, '').trim();
+        const cleanId = getCleanId(req.params.userId);
         const snap = await admin.database().ref(`users/${cleanId}`).get();
         if (snap.exists()) res.json(snap.val());
         else res.status(404).send("Not found");
@@ -136,71 +129,70 @@ router.get('/profile/:userId', async (req, res) => {
 
 router.get('/transactions/:userId', async (req, res) => {
     try {
-        const searchIds = getSearchIds(req.params.userId);
-        const list = await Transaction.find({ userId: { $in: searchIds } }).sort({ timestamp: -1 }).limit(20);
+        const cleanId = getCleanId(req.params.userId);
+        const fs = admin.firestore();
+        const snapshot = await fs.collection('transactions')
+            .where('userId', '==', cleanId)
+            .orderBy('timestamp', 'desc')
+            .limit(20)
+            .get();
+
+        const list = [];
+        snapshot.forEach(doc => list.push({ id: doc.id, ...doc.data() }));
         res.json(list);
     } catch (e) { res.status(500).send(e.message); }
 });
 
 router.get('/summary/:userId', async (req, res) => {
     try {
-        const searchIds = getSearchIds(req.params.userId);
+        const cleanId = getCleanId(req.params.userId);
+        const fs = admin.firestore();
         const startOfDay = new Date().setHours(0,0,0,0);
-        const daily = await Transaction.aggregate([{ $match: { userId: { $in: searchIds }, category: 'RIDE_INCOME', timestamp: { $gte: startOfDay } } }, { $group: { _id: null, total: { $sum: "$amount" } } }]);
-        const monthly = await Transaction.aggregate([{ $match: { userId: { $in: searchIds }, category: 'RIDE_INCOME', timestamp: { $gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime() } } }, { $group: { _id: null, total: { $sum: "$amount" } } }]);
-        res.json({ todayEarnings: daily[0]?.total || 0, monthlyEarnings: monthly[0]?.total || 0 });
+
+        const snapshot = await fs.collection('transactions')
+            .where('userId', '==', cleanId)
+            .where('timestamp', '>=', startOfDay)
+            .get();
+
+        let today = 0;
+        snapshot.forEach(doc => {
+            const data = doc.data();
+            if (data.category === 'RIDE_INCOME') today += data.amount;
+        });
+
+        res.json({ todayEarnings: today, monthlyEarnings: 0 });
     } catch (e) { res.status(500).send(e.message); }
 });
 
 router.post('/review', async (req, res) => {
     try {
         const data = req.body;
-        const targetId = data.targetUserId.toString().replace(/\+/g, '').trim();
-        const reviewerId = data.reviewerId.toString().replace(/\+/g, '').trim();
+        const targetId = getCleanId(data.targetUserId);
+        const reviewerId = getCleanId(data.reviewerId);
         const role = (data.role || "Passenger").toLowerCase();
+        const fs = admin.firestore();
 
-        // 1. Save to MongoDB (Separate Collection)
-        const mongoRole = role.charAt(0).toUpperCase() + role.slice(1);
-        await new Review({
+        // 1. Save to Firestore
+        await fs.collection('reviews').add({
             ...data,
             targetUserId: targetId,
             reviewerId: reviewerId,
-            role: mongoRole === "Driver" || mongoRole === "Passenger" ? mongoRole : "Passenger",
-            rideId: data.rideId || "MANUAL",
             timestamp: Date.now()
-        }).save();
+        });
 
-        // 2. EMBED IN RIDE DOCUMENT (Google AI Recommendation)
-        if (data.rideId && data.rideId !== "MANUAL") {
-            const reviewField = (role === "passenger") ? "driverReview" : "passengerReview";
-            await MongoRide.findOneAndUpdate(
-                { id: data.rideId },
-                { [reviewField]: { rating: data.rating, comment: data.comment || "", createdAt: new Date() } }
-            );
-        }
-
-        // 3. Update RTDB Aggregate Rating
+        // 2. Update RTDB Aggregates
         const ref = admin.database().ref(`users/${targetId}`);
         const snapshot = await ref.get();
 
         if (snapshot.exists()) {
             const p = snapshot.val();
-            // If reviewer is Passenger, target is Driver
-            const isTargetDriver = (role === "passenger");
-            const prefix = isTargetDriver ? "driver" : "passenger";
+            const prefix = (role === "passenger") ? "driver" : "passenger";
 
-            const oldCount = Number(p[`${prefix}ReviewCount`]) || 0;
+            const count = (Number(p[`${prefix}ReviewCount`]) || 0) + 1;
             const oldRating = Number(p[`${prefix}Rating`]) || 5.0;
+            const newRating = Math.round(((oldRating * (count - 1)) + Number(data.rating)) / count * 10) / 10;
 
-            const newCount = oldCount + 1;
-            const newRating = Math.round(((oldRating * oldCount) + Number(data.rating)) / newCount * 10) / 10;
-
-            const updates = {};
-            updates[`${prefix}ReviewCount`] = newCount;
-            updates[`${prefix}Rating`] = newRating;
-
-            await ref.update(updates);
-            console.log(`⭐ RTDB Aggregate Updated for ${targetId}: ${prefix}Rating=${newRating}, Count=${newCount}`);
+            await ref.update({ [`${prefix}ReviewCount`]: count, [`${prefix}Rating`]: newRating });
         }
         res.json({ success: true });
     } catch (e) {
@@ -211,8 +203,16 @@ router.post('/review', async (req, res) => {
 
 router.get('/reviews/:userId', async (req, res) => {
     try {
-        const searchIds = getSearchIds(req.params.userId);
-        const list = await Review.find({ targetUserId: { $in: searchIds } }).sort({ timestamp: -1 }).limit(20);
+        const cleanId = getCleanId(req.params.userId);
+        const fs = admin.firestore();
+        const snapshot = await fs.collection('reviews')
+            .where('targetUserId', '==', cleanId)
+            .orderBy('timestamp', 'desc')
+            .limit(20)
+            .get();
+
+        const list = [];
+        snapshot.forEach(doc => list.push({ id: doc.id, ...doc.data() }));
         res.json(list);
     } catch (e) { res.status(500).send(e.message); }
 });

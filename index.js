@@ -3,7 +3,6 @@ const cors = require('cors');
 const http = require('http');
 const { Server } = require('socket.io');
 const admin = require('firebase-admin');
-// SCALE FIX: Removing MongoDB to save costs and move to Native Firestore
 const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
@@ -15,7 +14,7 @@ app.set('trust proxy', 1);
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
-// 1. DATABASE INITIALIZATION (Bulletproof Pattern)
+// 1. DATABASE INITIALIZATION (Hybrid Auth)
 try {
     let dbUrl = (process.env.FIREBASE_DATABASE_URL || "https://chalodrive-app-default-rtdb.firebaseio.com").replace(/\/$/, "");
 
@@ -30,16 +29,16 @@ try {
         admin.initializeApp({
             credential: admin.credential.cert(serviceAccount),
             databaseURL: dbUrl,
-            projectId: serviceAccount.project_id // EXPLICITLY SET PROJECT ID
+            projectId: serviceAccount.project_id
         });
         console.log(`✅ Firebase Admin: Initialized for Project: ${serviceAccount.project_id}`);
     } else {
         admin.initializeApp({
             credential: admin.credential.applicationDefault(),
             databaseURL: dbUrl,
-            projectId: "chalodrive-app" // FALLBACK PROJECT ID
+            projectId: "chalodrive-app"
         });
-        console.log("✅ Firebase Admin: Initialized via ADC");
+        console.log("✅ Firebase Admin: Initialized via Default Identity");
     }
 
     global.db_fs = admin.firestore();
@@ -84,7 +83,7 @@ app.use('/notifications', verifyToken, require('./routes/notifications'));
 app.use('/maps', require('./routes/maps'));
 app.use('/admin', verifyToken, verifyAdmin, require('./routes/admin'));
 
-// 4. GLOBAL ERROR HANDLER (Scale Optimization: Prevents server crash)
+// 4. GLOBAL ERROR HANDLER
 app.use((err, req, res, next) => {
     console.error("🔥 Global Error Caught:", err.stack);
     res.status(err.status || 500).json({
@@ -118,16 +117,14 @@ io.on('connection', (socket) => {
                 socket.currentHexRoom = hexAddr;
             }
 
-            // b. Broadcast ONLY to users in the same hexagon (Scale fix: No global broadcast)
-            // For production, we'd also send to k-ring (neighbors), but this is Step 3 base.
+            // b. Broadcast ONLY to users in the same hexagon
             io.to(hexAddr).emit('location_updated', updatedData);
 
             // c. Debounced persistence (Save to Firebase every 10s or 500m move)
-            // This reduces Firebase bill significantly at 10M users.
             try {
                 admin.database().ref(`users/${cleanId}`).update({
                     lastLat: data.lat,
-                    lastLon: data.lon,
+                    lastLon: longitude,
                     h3Index: hexAddr,
                     lastSeen: Date.now()
                 });

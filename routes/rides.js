@@ -2,14 +2,13 @@ const express = require('express');
 const router = express.Router();
 const admin = require('firebase-admin');
 
-// Helper: Extreme Robust Identity Matcher (Regex based)
-function getIdentityFilter(userId) {
-    if (!userId) return null;
-    const digitsOnly = userId.toString().replace(/\D/g, '').slice(-10); // Last 10 digits
-    return new RegExp(digitsOnly + '$'); // Matches anything ending in these 10 digits
+// Helper: Standardized Clean ID for Firestore Lookups
+function getCleanId(userId) {
+    if (!userId) return "";
+    return userId.toString().replace(/\+/g, '').trim();
 }
 
-// 1. Request Ride
+// 1. Request Ride (Active in RTDB)
 router.post('/request', async (req, res) => {
     try {
         const rideData = req.body;
@@ -21,19 +20,20 @@ router.post('/request', async (req, res) => {
         const io = req.app.get('socketio');
         if (io) io.emit('new_ride_request', rideWithId);
         res.status(201).json(rideWithId);
-    } catch (e) { res.status(500).send(e.message); }
+    } catch (e) {
+        console.error("❌ Request Ride Error:", e.message);
+        res.status(500).send(e.message);
+    }
 });
 
-// 2. Update Status: Archive to MongoDB + Accounting + Cancellation Hits
+// 2. Update Status: Archive to Cloud Firestore + Accounting + Cancellation Hits
 router.post('/update-status', async (req, res) => {
     try {
-        const { rideId, status, cancelledBy } = req.body; // cancelledBy: 'passenger' or 'driver'
-        console.log(`🔄 Status Update Attempt: Ride=${rideId}, NewStatus=${status}, By=${cancelledBy}`);
-
+        const { rideId, status, cancelledBy } = req.body;
         const db = admin.database();
+        const fs = admin.firestore();
         const rideRef = db.ref(`active_rides/${rideId}`);
 
-        // Fetch current ride data BEFORE update/deletion
         const rideSnap = await rideRef.get();
         if (!rideSnap.exists()) return res.status(404).send("Ride not found");
         const finalRideData = rideSnap.val();
@@ -53,16 +53,9 @@ router.post('/update-status', async (req, res) => {
                         const now = new Date();
                         const currentMonth = now.getMonth();
 
-                        // 1. Update Earnings
                         let monthlyEarnings = (driver.lastEarningsResetMonth === currentMonth) ? (driver.monthlyEarnings || 0) + fare : fare;
-
-                        // 2. Today's Earnings Logic (Reset if day changed)
                         const startOfDay = new Date().setHours(0,0,0,0);
                         let todayEarnings = (driver.lastEarningsResetDay >= startOfDay) ? (driver.todayEarnings || 0) + fare : fare;
-
-                        // 3. Increment Ride Counters
-                        const totalRides = (driver.driverTotalRides || 0) + 1;
-                        const completedRides = (driver.driverCompletedRides || 0) + 1;
 
                         await driverRef.update({
                             todayEarnings,
@@ -70,14 +63,24 @@ router.post('/update-status', async (req, res) => {
                             lifetimeEarnings: (driver.lifetimeEarnings || 0) + fare,
                             lastEarningsResetMonth: currentMonth,
                             lastEarningsResetDay: Date.now(),
-                            driverTotalRides: totalRides,
-                            driverCompletedRides: completedRides,
+                            driverTotalRides: (driver.driverTotalRides || 0) + 1,
+                            driverCompletedRides: (driver.driverCompletedRides || 0) + 1,
                             isOnline: true,
                             driverStatus: 'AVAILABLE'
                         });
-                        console.log(`✅ Counters updated for ${driverId}: Rides=${completedRides}, Today=Rs.${todayEarnings}`);
 
-                        // 3. BONUS LOGIC: Update progress for matching active schemes
+                        // SAVE TRANSACTION TO FIRESTORE
+                        await fs.collection('transactions').add({
+                            userId: getCleanId(driverId),
+                            title: "Ride Income",
+                            amount: fare,
+                            type: "CREDIT",
+                            category: "RIDE_INCOME",
+                            reference: rideId,
+                            timestamp: Date.now()
+                        });
+
+                        // BONUS LOGIC: Update progress for matching active schemes
                         const schemesSnap = await db.ref('bonus_schemes').get();
                         if (schemesSnap.exists()) {
                             const schemes = schemesSnap.val();
@@ -102,15 +105,14 @@ router.post('/update-status', async (req, res) => {
                                         const finalWallet = Math.round(((driver.walletBalance || 0) + reward) * 100) / 100;
                                         await driverRef.update({ walletBalance: finalWallet });
 
-                                        await new Transaction({
-                                            userId: driverId,
+                                        await fs.collection('transactions').add({
+                                            userId: getCleanId(driverId),
                                             title: `Bonus: ${scheme.title}`,
                                             amount: reward,
                                             type: "CREDIT",
                                             category: "BONUS",
-                                            status: "COMPLETED",
                                             timestamp: Date.now()
-                                        }).save();
+                                        });
 
                                         newProgress = 0;
                                         completionCount += 1;
@@ -125,40 +127,22 @@ router.post('/update-status', async (req, res) => {
                                 }
                             }
                         }
-
-                        // 4. Log Income Transaction to MongoDB
-                        await new Transaction({
-                            userId: driverId,
-                            title: "Ride Income (Directly Received)",
-                            amount: parseFloat(fare),
-                            type: "CREDIT",
-                            category: "RIDE_INCOME",
-                            status: "COMPLETED",
-                            reference: rideId,
-                            timestamp: Date.now()
-                        }).save();
                     }
-                } catch (accErr) { console.error("❌ Accounting/Bonus Error:", accErr.message); }
+                } catch (accErr) { console.error("❌ Firestore Accounting Error:", accErr.message); }
             }
 
+            // ARCHIVE RIDE TO FIRESTORE
             try {
-                const mongoData = {
+                await fs.collection('rides').doc(rideId).set({
                     ...finalRideData,
-                    id: rideId,
                     status: 'COMPLETED',
                     paymentStatus: 'PAID',
-                    offers: Object.values(finalRideData.offers || {})
-                };
-                if (mongoData.pickupLng && !mongoData.pickupLon) mongoData.pickupLon = mongoData.pickupLng;
-                if (mongoData.destinationLng && !mongoData.destinationLon) mongoData.destinationLon = mongoData.destinationLng;
-
-                await new MongoRide(mongoData).save();
-                console.log(`✅ Ride ${rideId} archived to MongoDB`);
+                    archivedAt: Date.now()
+                });
                 await rideRef.remove();
-            } catch (mongoErr) { console.error("❌ MongoDB Archive Error:", mongoErr.message); }
+            } catch (fsErr) { console.error("❌ Firestore Archive Error:", fsErr.message); }
 
         } else if (['CANCELLED', 'RIDE_CANCELLED'].includes(status)) {
-            // --- UPDATED: CANCELLATION HITS LOGIC (Audit Ready) ---
             const passengerId = finalRideData.passengerId;
             const driverId = finalRideData.driverId;
 
@@ -169,57 +153,37 @@ router.post('/update-status', async (req, res) => {
                     const p = pSnap.val();
                     const now = Date.now();
                     let count = (p.passengerCancellationCount || 0);
-                    // Reset count if last cancel was > 1 hour ago
                     if (now - (p.lastCancellationTimestamp || 0) > 3600000) count = 0;
 
                     const newCount = count + 1;
-                    const updates = {
-                        passengerCancellationCount: newCount,
-                        lastCancellationTimestamp: now
-                    };
+                    const updates = { passengerCancellationCount: newCount, lastCancellationTimestamp: now };
 
-                    // Block user for 30 mins if they cancel 5 times in an hour
                     if (newCount >= 5) {
                         updates.tempBlockExpiry = now + 1800000;
-                        console.log(`🚫 Passenger ${passengerId} auto-blocked for 30 mins due to 5 cancellations.`);
+                        console.log(`🚫 Passenger ${passengerId} auto-blocked for 30 mins.`);
                     }
-
                     await pRef.update(updates);
-                    console.log(`📉 Passenger Cancellation Hit recorded for ${passengerId}. Current Count: ${newCount}`);
                 }
             } else if (cancelledBy === 'driver' && driverId) {
                 const dRef = db.ref(`users/${driverId}`);
                 const dSnap = await dRef.get();
                 if (dSnap.exists()) {
-                    const d = dSnap.val();
-                    const hits = (Number(d.cancellationHits) || 0) + 1;
-                    await dRef.update({
-                        cancellationHits: hits,
-                        isOnline: true,
-                        driverStatus: 'AVAILABLE'
-                    });
-                    console.log(`📉 Driver Cancellation Hit recorded for ${driverId}. Total Hits: ${hits}`);
+                    const hits = (Number(dSnap.val().cancellationHits) || 0) + 1;
+                    await dRef.update({ cancellationHits: hits, isOnline: true, driverStatus: 'AVAILABLE' });
                 }
             }
 
             try {
-                await new MongoRide({
+                await fs.collection('rides').doc(rideId).set({
                     ...finalRideData,
-                    id: rideId,
                     status: 'CANCELLED',
-                    offers: Object.values(finalRideData.offers || {})
-                }).save();
+                    archivedAt: Date.now()
+                });
                 await rideRef.remove();
-            } catch (e) { console.error("❌ Cancel Archive Error:", e.message); }
+            } catch (e) {}
         }
-
-        const io = req.app.get('socketio');
-        if (io) io.emit(`ride_status_updated_${rideId}`, { status });
         res.json({ success: true });
-    } catch (e) {
-        console.error("❌ Status Update Route Error:", e.message);
-        res.status(500).send(e.message);
-    }
+    } catch (e) { res.status(500).send(e.message); }
 });
 
 // 3. Bid
@@ -233,93 +197,63 @@ router.post('/bid', async (req, res) => {
     } catch (e) { res.status(500).send(e.message); }
 });
 
-// 4. Accept Bid: Commission Accounting
+// 4. Accept Bid
 router.post('/accept-bid', async (req, res) => {
     try {
         const { rideId, offerId, driverId } = req.body;
         const db = admin.database();
+        const fs = admin.firestore();
         const rideRef = db.ref(`active_rides/${rideId}`);
         const driverRef = db.ref(`users/${driverId}`);
 
-        const rideSnap = await rideRef.get();
-        if (!rideSnap.exists()) return res.status(404).send("Ride not found");
+        const [rideSnap, driverSnap, configSnap] = await Promise.all([rideRef.get(), driverRef.get(), db.ref('admin_config/settings').get()]);
+        if (!rideSnap.exists() || !driverSnap.exists()) return res.status(404).send("Not found");
+
         const ride = rideSnap.val();
-
-        const driverSnap = await driverRef.get();
-        if (!driverSnap.exists()) return res.status(404).send("Driver not found");
         const driver = driverSnap.val();
-
-        const configSnap = await db.ref('admin_config/settings').get();
         const commissionRate = configSnap.val()?.commission_rate || 10;
         const acceptedOffer = Object.values(ride.offers || {}).find(o => o.id === offerId || o.driverId === driverId);
         if (!acceptedOffer) return res.status(404).send("Offer not found");
 
         const commissionAmount = Math.round((acceptedOffer.bidFare * commissionRate) / 100 * 100) / 100;
+        const newBalance = Math.round(((driver.walletBalance || 0) - commissionAmount) * 100) / 100;
 
-        // 1. Deduct from RTDB
-        const currentBalance = (driver.walletBalance || 0);
-        const newBalance = Math.round((currentBalance - commissionAmount) * 100) / 100;
         await driverRef.update({ walletBalance: newBalance, driverStatus: 'ON_CITY_RIDE' });
 
-        // 2. Save Commission to MongoDB
-        try {
-            await new Transaction({
-                userId: driverId,
-                title: "Ride Commission",
-                amount: commissionAmount,
-                type: "DEBIT",
-                category: "COMMISSION",
-                status: "COMPLETED",
-                reference: rideId,
-                timestamp: Date.now()
-            }).save();
-            console.log(`📉 Commission of Rs.${commissionAmount} debited.`);
-        } catch (tErr) { console.error("❌ Commission Log Error:", tErr.message); }
+        await fs.collection('transactions').add({
+            userId: getCleanId(driverId),
+            title: "Ride Commission",
+            amount: commissionAmount,
+            type: "DEBIT",
+            category: "COMMISSION",
+            reference: rideId,
+            timestamp: Date.now()
+        });
 
-        const rideUpdates = { status: 'ACCEPTED', driverId: driverId, driverName: driver.name, offeredFare: acceptedOffer.bidFare, commissionAmount: commissionAmount, vehicleType: driver.vehicleInfo?.type || ride.vehicleType };
-        await rideRef.update(rideUpdates);
-        res.json({ ...ride, ...rideUpdates });
-    } catch (e) { res.status(500).send(e.message); }
-});
-
-// 5. Update Payment
-router.post('/update-payment', async (req, res) => {
-    try {
-        const { rideId, paymentStatus, paymentMethod } = req.body;
-        await MongoRide.findOneAndUpdate({ id: rideId }, { paymentStatus, paymentMethod }, { new: true });
+        const updates = { status: 'ACCEPTED', driverId: driverId, driverName: driver.name, offeredFare: acceptedOffer.bidFare, commissionAmount, vehicleType: driver.vehicleInfo?.type || ride.vehicleType };
+        await rideRef.update(updates);
         res.json({ success: true });
     } catch (e) { res.status(500).send(e.message); }
 });
 
-// 6. Get History (Aggressive ID Matching + Direct Fallback)
+// 6. Get History (Firestore Fetch)
 router.get('/history/:userId', async (req, res) => {
     try {
-        const rawId = req.params.userId;
-        const cleanId = rawId.replace(/\+/g, '').trim();
-        const digits = cleanId.slice(-10);
-        const regex = new RegExp(digits + '$');
+        const cleanId = getCleanId(req.params.userId);
+        const fs = admin.firestore();
 
-        console.log(`📜 History Fetch Request for: ${rawId}, SearchDigits: ${digits}`);
+        const [pSnap, dSnap] = await Promise.all([
+            fs.collection('rides').where('passengerId', '==', cleanId).orderBy('archivedAt', 'desc').limit(20).get(),
+            fs.collection('rides').where('driverId', '==', cleanId).orderBy('archivedAt', 'desc').limit(20).get()
+        ]);
 
-        const query = {
-            $or: [
-                { passengerId: cleanId },
-                { driverId: cleanId },
-                { passengerId: rawId },
-                { driverId: rawId },
-                { passengerId: regex },
-                { driverId: regex }
-            ]
-        };
+        const history = [];
+        pSnap.forEach(doc => history.push({ id: doc.id, ...doc.data() }));
+        dSnap.forEach(doc => history.push({ id: doc.id, ...doc.data() }));
+        history.sort((a, b) => b.archivedAt - a.archivedAt);
 
-        const rides = await MongoRide.find(query).sort({ timestamp: -1 }).limit(50);
-
-        console.log(`✅ Found ${rides.length} rides in history.`);
-        res.json(rides);
-    } catch (e) {
-        console.error("❌ History Route Error:", e.message);
-        res.status(500).send(e.message);
-    }
+        res.json(history);
+    } catch (e) { res.status(500).send(e.message); }
 });
 
 module.exports = router;
