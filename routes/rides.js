@@ -206,15 +206,21 @@ router.get('/history/:userId', async (req, res) => {
 
         const rawHistory = await DB.getRideHistory(userId);
 
-        // NORMALIZATION: Convert Map 'offers' to Array 'offers' to prevent Android crashes
+        // ABSOLUTE NORMALIZATION: Ensure 'offers' is ALWAYS an array before sending to mobile app
         const cleanHistory = rawHistory.map(ride => {
             const cleanRide = { ...ride };
-            if (cleanRide.offers && !Array.isArray(cleanRide.offers)) {
-                // If it's a Firebase-style Map, convert to a list
+
+            // If 'offers' exists and is an object (not an array), convert it
+            if (cleanRide.offers && typeof cleanRide.offers === 'object' && !Array.isArray(cleanRide.offers)) {
+                console.log(`🔧 Normalizing offers for ride ${ride.id}`);
                 cleanRide.offers = Object.values(cleanRide.offers);
             } else if (!cleanRide.offers) {
                 cleanRide.offers = [];
             }
+
+            // Ensure offers is definitely an array at this point
+            if (!Array.isArray(cleanRide.offers)) cleanRide.offers = [];
+
             return cleanRide;
         });
 
