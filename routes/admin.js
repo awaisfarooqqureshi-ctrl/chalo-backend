@@ -81,14 +81,18 @@ router.post('/approve-driver', async (req, res) => {
             const tokenSnap = await db.ref(`users/${cleanId}/fcmToken`).get();
             if (tokenSnap.exists()) {
                 const fcmToken = tokenSnap.val();
-                await admin.messaging().send({
+                const response = await admin.messaging().send({
                     token: fcmToken,
                     notification: { title, body: message },
                     data: { type: 'VERIFICATION_UPDATE', status }
                 });
-                console.log(`🚀 Push sent to Driver ${cleanId}`);
+                console.log(`🚀 FCM Success: Notification sent to ${cleanId}. Response:`, response);
+            } else {
+                console.log(`⚠️ FCM Warning: No token found for user ${cleanId}. Notification not sent.`);
             }
-        } catch (pErr) { console.error("❌ FCM Push Failed:", pErr.message); }
+        } catch (pErr) {
+            console.error("🔥 FCM Critical Failure:", pErr.message);
+        }
 
         res.json({ success: true, message: `Driver status updated and notification sent.` });
     } catch (error) {
