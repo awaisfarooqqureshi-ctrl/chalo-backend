@@ -86,26 +86,29 @@ router.post('/register-driver', async (req, res) => {
     }
 });
 
-// --- History & Summary (ULTRA ROBUST) ---
 router.get('/transactions/:userId', async (req, res) => {
     try {
         const userId = getCleanId(req.params.userId);
-        console.log(`🏦 Fetching transactions for: ${userId}`);
+        console.log(`🏦 Wallet Fetch for: ${userId}`);
 
         const list = await DB.getTransactions(userId);
 
-        // Ensure data is clean before sending to Android
+        // Final Normalization: Ensuring consistency for Android
         const cleanList = list.map(t => ({
-            ...t,
-            id: t.id || Math.random().toString(36).substr(2, 9),
-            amount: Number(t.amount) || 0,
+            id: t.id || `TXN_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+            title: t.title || "Transaction",
+            amount: parseFloat(t.amount) || 0,
+            type: t.type || "CREDIT",
+            category: t.category || "GENERAL",
+            status: t.status || "COMPLETED",
             timestamp: Number(t.timestamp) || Date.now()
         }));
 
+        console.log(`✅ Returned ${cleanList.length} transactions for ${userId}`);
         res.json(cleanList);
     } catch (e) {
         console.error("🔥 Transaction API Error:", e.message);
-        res.json([]); // Return empty array instead of 500
+        res.json([]);
     }
 });
 
