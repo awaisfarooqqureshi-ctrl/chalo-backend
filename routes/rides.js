@@ -76,18 +76,26 @@ router.post('/update-status', async (req, res) => {
                             reference: rideId
                         });
 
-                        // BONUS LOGIC
+                        // 3. BONUS LOGIC: Smart Vehicle Grouping
                         const schemesSnap = await db.ref('bonus_schemes').get();
                         if (schemesSnap.exists()) {
                             const schemes = schemesSnap.val();
-                            const rideVehicleType = (finalRideData.vehicleType || "Car").toLowerCase();
-                            const isBikeOrRiksha = rideVehicleType.includes("bike") || rideVehicleType.includes("riksha") || rideVehicleType.includes("rickshaw");
-                            const currentRideGroup = isBikeOrRiksha ? "BIKE_RIKSHAW" : "CAR";
+
+                            // DETERMINING THE VEHICLE GROUP
+                            const vType = (finalRideData.vehicleType || "Car").toLowerCase();
+                            let currentRideGroup = "CAR"; // Default for Comfort, Mini, etc.
+
+                            if (vType.includes("bike") || vType.includes("riksha") || vType.includes("rickshaw")) {
+                                currentRideGroup = "BIKE_RIKSHAW";
+                            } else if (["mini", "comfort", "premium", "van", "car"].some(word => vType.includes(word))) {
+                                currentRideGroup = "CAR";
+                            }
 
                             for (const sId in schemes) {
                                 const scheme = schemes[sId];
                                 const schemeGroup = scheme.vehicleGroup || "ALL";
 
+                                // Only process if Group matches OR scheme is for ALL
                                 if (scheme.isActive && (schemeGroup === "ALL" || schemeGroup === currentRideGroup)) {
                                     const progressRef = db.ref(`driver_bonus_progress/${driverId}/${sId}`);
                                     const progSnap = await progressRef.get();
