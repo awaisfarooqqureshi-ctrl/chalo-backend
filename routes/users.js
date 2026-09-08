@@ -96,16 +96,33 @@ router.get('/transactions/:userId', async (req, res) => {
 
 router.get('/summary/:userId', async (req, res) => {
     try {
-        const list = await DB.getTransactions(getCleanId(req.params.userId));
-        const startOfDay = new Date().setHours(0,0,0,0);
+        const userId = getCleanId(req.params.userId);
+        const list = await DB.getTransactions(userId);
 
-        let today = 0;
+        const now = new Date();
+        const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+        const startOfWeek = new Date(now.setDate(now.getDate() - now.getDay())).getTime();
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+
+        let today = 0, weekly = 0, monthly = 0;
+
         list.forEach(t => {
-            if (t.timestamp >= startOfDay && t.category === 'RIDE_INCOME') today += t.amount;
+            if (t.category === 'RIDE_INCOME') {
+                if (t.timestamp >= startOfDay) today += t.amount;
+                if (t.timestamp >= startOfWeek) weekly += t.amount;
+                if (t.timestamp >= startOfMonth) monthly += t.amount;
+            }
         });
 
-        res.json({ todayEarnings: today, monthlyEarnings: 0 });
-    } catch (e) { res.status(500).send(e.message); }
+        res.json({
+            todayEarnings: today,
+            weeklyEarnings: weekly,
+            monthlyEarnings: monthly
+        });
+    } catch (e) {
+        console.error("🔥 Summary Error:", e.message);
+        res.status(500).send(e.message);
+    }
 });
 
 router.get('/profile/:userId', async (req, res) => {
