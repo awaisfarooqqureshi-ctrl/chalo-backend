@@ -123,27 +123,52 @@ router.post('/review', async (req, res) => {
         const targetId = getCleanId(data.targetUserId);
         const role = (data.role || "Passenger").toLowerCase();
 
+        console.log(`⭐ New Review Attempt: Target=${targetId}, Role=${role}, Rating=${data.rating}`);
+
         // 1. Save to Firestore via Service
-        await DB.addReview({
-            ...data,
-            targetUserId: targetId,
-            timestamp: Date.now()
-        });
+        try {
+            await DB.addReview({
+                ...data,
+                targetUserId: targetId,
+                timestamp: Date.now()
+            });
+            console.log(`✅ Review archived in Firestore`);
+        } catch (dbErr) {
+            console.error("❌ Firestore Review Save Failed:", dbErr.message);
+        }
 
         // 2. Update RTDB Aggregates
-        const ref = admin.database().ref(`users/${targetId}`);
+        const db = admin.database();
+        const ref = db.ref(`users/${targetId}`);
         const snapshot = await ref.get();
 
         if (snapshot.exists()) {
             const p = snapshot.val();
-            const prefix = (role === "passenger") ? "driver" : "passenger";
-            const count = (Number(p[`${prefix}ReviewCount`]) || 0) + 1;
+            // If reviewer is Passenger, target is Driver
+            const isTargetDriver = (role === "passenger");
+            const prefix = isTargetDriver ? "driver" : "passenger";
+
+            const oldCount = Number(p[`${prefix}ReviewCount`]) || 0;
             const oldRating = Number(p[`${prefix}Rating`]) || 5.0;
-            const newRating = Math.round(((oldRating * (count - 1)) + Number(data.rating)) / count * 10) / 10;
-            await ref.update({ [`${prefix}ReviewCount`]: count, [`${prefix}Rating`]: newRating });
+
+            const newCount = oldCount + 1;
+            const newRating = Math.round(((oldRating * oldCount) + Number(data.rating)) / newCount * 10) / 10;
+
+            const updates = {};
+            updates[`${prefix}ReviewCount`] = newCount;
+            updates[`${prefix}Rating`] = newRating;
+
+            await ref.update(updates);
+            console.log(`📊 RTDB Aggregate Updated for ${targetId}: ${prefix}Rating=${newRating}, Count=${newCount}`);
+        } else {
+            console.warn(`⚠️ Target user ${targetId} not found in RTDB. Count not updated.`);
         }
+
         res.json({ success: true });
-    } catch (e) { res.status(500).send(e.message); }
+    } catch (e) {
+        console.error("❌ Review API Global Error:", e.message);
+        res.status(500).send(e.message);
+    }
 });
 
 module.exports = router;
