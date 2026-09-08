@@ -198,37 +198,38 @@ router.post('/accept-bid', async (req, res) => {
     } catch (e) { res.status(500).send(e.message); }
 });
 
-// 6. Get History (Enhanced with Data Normalization)
+// 6. Get History (ULTRA ROBUST NORMALIZATION)
 router.get('/history/:userId', async (req, res) => {
     try {
         const userId = getCleanId(req.params.userId);
-        console.log(`📜 Fetching history for: ${userId}`);
-
         const rawHistory = await DB.getRideHistory(userId);
 
-        // ABSOLUTE NORMALIZATION: Ensure 'offers' is ALWAYS an array before sending to mobile app
         const cleanHistory = rawHistory.map(ride => {
             const cleanRide = { ...ride };
 
-            // If 'offers' exists and is an object (not an array), convert it
-            if (cleanRide.offers && typeof cleanRide.offers === 'object' && !Array.isArray(cleanRide.offers)) {
-                console.log(`🔧 Normalizing offers for ride ${ride.id}`);
-                cleanRide.offers = Object.values(cleanRide.offers);
-            } else if (!cleanRide.offers) {
+            // 1. Force Offers to be an Array, no matter what
+            if (cleanRide.offers && typeof cleanRide.offers === 'object') {
+                if (Array.isArray(cleanRide.offers)) {
+                    // It's already an array
+                } else {
+                    // It's a Map/Object, convert to values
+                    cleanRide.offers = Object.values(cleanRide.offers);
+                }
+            } else {
                 cleanRide.offers = [];
             }
 
-            // Ensure offers is definitely an array at this point
+            // 2. Ensure all list-type fields are actually lists
+            if (!Array.isArray(cleanRide.stops)) cleanRide.stops = [];
             if (!Array.isArray(cleanRide.offers)) cleanRide.offers = [];
 
             return cleanRide;
         });
 
-        console.log(`✅ History for ${userId}: Found ${cleanHistory.length} items`);
         res.json(cleanHistory);
     } catch (e) {
-        console.error("🔥 History API Error:", e.message);
-        res.status(500).send(`Server error: ${e.message}`);
+        console.error("🔥 History API Critical Error:", e.message);
+        res.status(500).json([]); // Return empty list instead of crashing app
     }
 });
 
