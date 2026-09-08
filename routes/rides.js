@@ -198,38 +198,37 @@ router.post('/accept-bid', async (req, res) => {
     } catch (e) { res.status(500).send(e.message); }
 });
 
-// 6. Get History (ULTRA ROBUST NORMALIZATION)
+// 6. Get History (ULTRA ROBUST + DEDUPLICATION)
 router.get('/history/:userId', async (req, res) => {
     try {
         const userId = getCleanId(req.params.userId);
         const rawHistory = await DB.getRideHistory(userId);
 
-        const cleanHistory = rawHistory.map(ride => {
-            const cleanRide = { ...ride };
+        // DEDUPLICATION: Use a Map to ensure each ride ID only appears once
+        const uniqueRides = new Map();
 
-            // 1. Force Offers to be an Array, no matter what
-            if (cleanRide.offers && typeof cleanRide.offers === 'object') {
-                if (Array.isArray(cleanRide.offers)) {
-                    // It's already an array
-                } else {
-                    // It's a Map/Object, convert to values
+        rawHistory.forEach(ride => {
+            if (!uniqueRides.has(ride.id)) {
+                const cleanRide = { ...ride };
+
+                // Normalization Logic
+                if (cleanRide.offers && typeof cleanRide.offers === 'object' && !Array.isArray(cleanRide.offers)) {
                     cleanRide.offers = Object.values(cleanRide.offers);
+                } else if (!cleanRide.offers) {
+                    cleanRide.offers = [];
                 }
-            } else {
-                cleanRide.offers = [];
+
+                uniqueRides.set(ride.id, cleanRide);
             }
-
-            // 2. Ensure all list-type fields are actually lists
-            if (!Array.isArray(cleanRide.stops)) cleanRide.stops = [];
-            if (!Array.isArray(cleanRide.offers)) cleanRide.offers = [];
-
-            return cleanRide;
         });
 
+        // Convert Map back to array and sort by time
+        const cleanHistory = Array.from(uniqueRides.values());
         res.json(cleanHistory);
+
     } catch (e) {
-        console.error("🔥 History API Critical Error:", e.message);
-        res.status(500).json([]); // Return empty list instead of crashing app
+        console.error("🔥 History Deduplication Error:", e.message);
+        res.json([]);
     }
 });
 
