@@ -44,27 +44,32 @@ class DatabaseService {
 
     async getTransactions(userId, limit = 20) {
         if (PROVIDER === 'FIRESTORE') {
-            // MIGRATION FIX: Check both 'userId' and 'fromUserId' (legacy)
-            const snapshot = await this.db.collection('transactions')
-                .where('userId', '==', userId)
-                .orderBy('timestamp', 'desc')
-                .limit(limit)
-                .get();
-
             const list = [];
-            snapshot.forEach(doc => list.push({ id: doc.id, ...doc.data() }));
+            try {
+                // 1. Check 'userId' (Primary)
+                const snapshot = await this.db.collection('transactions')
+                    .where('userId', '==', userId)
+                    .orderBy('timestamp', 'desc')
+                    .limit(limit)
+                    .get();
+                snapshot.forEach(doc => list.push({ id: doc.id, ...doc.data() }));
 
-            // If empty, try legacy field name 'fromUserId'
-            if (list.length === 0) {
+                // 2. Check 'fromUserId' (Legacy)
                 const legacySnap = await this.db.collection('transactions')
                     .where('fromUserId', '==', userId)
                     .orderBy('timestamp', 'desc')
                     .limit(limit)
                     .get();
-                legacySnap.forEach(doc => list.push({ id: doc.id, ...doc.data() }));
+                legacySnap.forEach(doc => {
+                    if (!list.find(t => t.id === doc.id)) {
+                        list.push({ id: doc.id, ...doc.data() });
+                    }
+                });
+            } catch (err) {
+                console.error("⚠️ Firestore Transaction Query Failed (Likely Index missing):", err.message);
             }
 
-            return list;
+            return list.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0)).slice(0, limit);
         }
     }
 
