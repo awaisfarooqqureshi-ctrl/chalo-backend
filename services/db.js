@@ -46,7 +46,8 @@ class DatabaseService {
         if (PROVIDER === 'FIRESTORE') {
             const list = [];
             try {
-                // 1. Check 'userId' (Primary)
+                // Try Primary Query (requires index for sorting)
+                console.log(`🔍 DB: Querying transactions for ${userId}...`);
                 const snapshot = await this.db.collection('transactions')
                     .where('userId', '==', userId)
                     .orderBy('timestamp', 'desc')
@@ -54,19 +55,35 @@ class DatabaseService {
                     .get();
                 snapshot.forEach(doc => list.push({ id: doc.id, ...doc.data() }));
 
-                // 2. Check 'fromUserId' (Legacy)
-                const legacySnap = await this.db.collection('transactions')
-                    .where('fromUserId', '==', userId)
-                    .orderBy('timestamp', 'desc')
-                    .limit(limit)
-                    .get();
-                legacySnap.forEach(doc => {
-                    if (!list.find(t => t.id === doc.id)) {
-                        list.push({ id: doc.id, ...doc.data() });
-                    }
-                });
+                // Try Legacy Query (requires index for sorting)
+                if (list.length < limit) {
+                    const legacySnap = await this.db.collection('transactions')
+                        .where('fromUserId', '==', userId)
+                        .orderBy('timestamp', 'desc')
+                        .limit(limit)
+                        .get();
+                    legacySnap.forEach(doc => {
+                        if (!list.find(t => t.id === doc.id)) list.push({ id: doc.id, ...doc.data() });
+                    });
+                }
             } catch (err) {
-                console.error("⚠️ Firestore Transaction Query Failed (Likely Index missing):", err.message);
+                if (err.message.includes("FAILED_PRECONDITION") || err.message.includes("index")) {
+                    console.error("⚠️ ACTION REQUIRED: Firestore Index missing for transactions!");
+                    const indexLink = err.message.match(/https:\/\/console\.firebase\.google\.com[^\s]*/);
+                    if (indexLink) {
+                        console.error(`👉 CLICK THIS LINK TO FIX: ${indexLink[0]}`);
+                    }
+
+                    // FALLBACK: Try fetching WITHOUT sorting (no index required)
+                    console.log("🛠️ Attempting fallback query without sorting...");
+                    const fallbackSnap = await this.db.collection('transactions')
+                        .where('userId', '==', userId)
+                        .limit(limit)
+                        .get();
+                    fallbackSnap.forEach(doc => list.push({ id: doc.id, ...doc.data() }));
+                } else {
+                    console.error("🔥 Firestore Query Error:", err.message);
+                }
             }
 
             return list.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0)).slice(0, limit);
