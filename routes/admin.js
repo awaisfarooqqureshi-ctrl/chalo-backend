@@ -100,4 +100,52 @@ router.post('/approve-driver', async (req, res) => {
     }
 });
 
+/**
+ * 4. SYSTEM CRON: Cleanup data older than 90 days
+ * Security: Requires 'X-Cron-Key' header
+ */
+router.post('/cron/cleanup', async (req, res) => {
+    const cronKey = req.headers['x-cron-key'];
+    if (cronKey !== (process.env.CRON_SECRET || "chalo_cleanup_master_2026")) {
+        return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+
+    try {
+        const fs = admin.firestore();
+        const ninetyDaysAgo = Date.now() - (90 * 24 * 60 * 60 * 1000);
+
+        console.log("🧹 CRON: Starting Data Cleanup...");
+
+        // A. Cleanup Old Rides
+        const oldRides = await fs.collection('rides').where('archivedAt', '<', ninetyDaysAgo).get();
+        const rideBatch = fs.batch();
+        oldRides.forEach(doc => rideBatch.delete(doc.ref));
+        await rideBatch.commit();
+        console.log(`✅ Cleaned ${oldRides.size} old rides.`);
+
+        // B. Cleanup Old Notifications
+        const oldNotifs = await fs.collection('notifications').where('timestamp', '<', ninetyDaysAgo).get();
+        const notifBatch = fs.batch();
+        oldNotifs.forEach(doc => notifBatch.delete(doc.ref));
+        await notifBatch.commit();
+        console.log(`✅ Cleaned ${oldNotifs.size} old notifications.`);
+
+        // C. Cleanup Old Transactions (History only, Balance is safe)
+        const oldTxns = await fs.collection('transactions').where('timestamp', '<', ninetyDaysAgo).get();
+        const txnBatch = fs.batch();
+        oldTxns.forEach(doc => txnBatch.delete(doc.ref));
+        await txnBatch.commit();
+        console.log(`✅ Cleaned ${oldTxns.size} old transactions.`);
+
+        res.json({
+            success: true,
+            message: "Cleanup completed successfully",
+            deletedCounts: { rides: oldRides.size, notifications: oldNotifs.size, transactions: oldTxns.size }
+        });
+    } catch (e) {
+        console.error("🔥 CRON ERROR:", e.message);
+        res.status(500).json({ success: false, message: e.message });
+    }
+});
+
 module.exports = router;
