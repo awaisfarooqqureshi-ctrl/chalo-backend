@@ -63,8 +63,12 @@ app.use(limiter);
 
 app.set('socketio', io);
 app.use(cors());
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
+const captureRawBody = (req, res, buffer) => {
+    req.rawBody = Buffer.from(buffer);
+};
+
+app.use(express.json({ limit: '50mb', verify: captureRawBody }));
+app.use(express.urlencoded({ limit: '50mb', extended: true, verify: captureRawBody }));
 
 // Modular Routes & Middleware
 const { verifyAppKey, verifyToken, verifyAdmin } = require('./middleware/auth');

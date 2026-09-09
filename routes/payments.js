@@ -7,6 +7,7 @@ const admin = require('firebase-admin');
 // Detect Environment and Base URL
 const RAPID_ENV = (process.env.RAPID_ENVIRONMENT || 'SANDBOX').toUpperCase();
 const BASE_URL = (process.env.RAPID_API_BASE_URL || "https://secure.rapid-gateway.com").replace(/\/$/, "");
+const WEBHOOK_SALT = process.env.RAPID_WEBHOOK_SALT || "";
 
 // Credentials Mapping Logic
 let RAPID_CLIENT_ID, RAPID_CLIENT_SECRET, RAPID_MERCHANT_ID;
@@ -28,6 +29,44 @@ console.log(`   Mode: ${RAPID_ENV}`);
 console.log(`   Base: ${BASE_URL}`);
 console.log(`   MID:  ${RAPID_MERCHANT_ID}`);
 console.log(`   🔑 OAuth Attempt: ID=${RAPID_CLIENT_ID?.substring(0,2)}***, Secret=${RAPID_CLIENT_SECRET?.substring(0,2)}***`);
+
+function getCleanId(userId) {
+    if (!userId) return "";
+    return userId.toString().replace(/\D/g, '').trim();
+}
+
+function getWebhookSignature(req) {
+    return req.headers['x-rapid-webhook-signature'] ||
+        req.headers['x-webhook-signature'] ||
+        req.body?.signature ||
+        req.body?.webhookSignature ||
+        req.body?.secureHash ||
+        req.body?.pp_SecureHash ||
+        "";
+}
+
+function isValidWebhook(req) {
+    if (!WEBHOOK_SALT || !req.rawBody) return false;
+
+    const suppliedSignature = getWebhookSignature(req).toString().replace(/^sha256=/i, '').trim();
+    if (!suppliedSignature) return false;
+
+    const payload = Buffer.from(req.rawBody);
+    const expectedHex = crypto.createHmac('sha256', WEBHOOK_SALT).update(payload).digest('hex');
+    const expectedBase64 = crypto.createHmac('sha256', WEBHOOK_SALT).update(payload).digest('base64');
+    const candidates = [
+        { value: expectedHex, caseInsensitive: true },
+        { value: expectedBase64, caseInsensitive: false }
+    ];
+
+    return candidates.some(({ value, caseInsensitive }) => {
+        const normalizedSupplied = caseInsensitive ? suppliedSignature.toLowerCase() : suppliedSignature;
+        const normalizedExpected = caseInsensitive ? value.toLowerCase() : value;
+        const supplied = Buffer.from(normalizedSupplied);
+        const actual = Buffer.from(normalizedExpected);
+        return supplied.length === actual.length && crypto.timingSafeEqual(supplied, actual);
+    });
+}
 
 /** ── Helper: Update User Balance in RTDB (Secure & Idempotent) ───── */
 async function updateBalance(userId, amount, basketId) {
@@ -104,9 +143,14 @@ async function getAccessToken() {
 router.post('/initiate', async (req, res) => {
     try {
         const data = req.body.paymentIntent || req.body;
-        const { amount, userId, phone } = data;
+        const { amount, userId: requestedUserId, phone } = data;
+        const authenticatedUserId = req.user?.userId || "";
+        const userId = authenticatedUserId || requestedUserId;
 
         if (!amount || !userId || !phone) return res.status(400).json({ success: false, message: "Missing data" });
+        if (authenticatedUserId && requestedUserId && getCleanId(authenticatedUserId) !== getCleanId(requestedUserId)) {
+            return res.status(403).json({ success: false, message: "Payment user mismatch" });
+        }
 
         const token = await getAccessToken();
 
@@ -221,30 +265,16 @@ router.get('/checkout', (req, res) => {
 // Authoritative Redirect Success Page
 router.get('/success', async (req, res) => {
     // Robust extraction from multiple possible sources
-    const status = req.query.status || 'success';
     const amount = req.query.amt || req.query.amount;
     const basketId = req.query.bid || req.query.basket_id;
-    const userId = req.query.uid;
 
-    console.log("🏁 Success Redirect Hit:", { status, amount, basketId, userId });
-
-    if (status.toLowerCase() === 'success') {
-        if (userId && amount) {
-            await updateBalance(userId, amount, basketId);
-        } else if (basketId) {
-            // Fallback: try extracting from basketId if uid/amt missing
-            const parts = basketId.split('-');
-            const extractedId = parts.slice(1, -1).join('-');
-            // Note: can't extract amount from basketId easily without extra logic
-            if (extractedId && amount) await updateBalance(extractedId, amount, basketId);
-        }
-    }
+    console.log("🏁 Payment Redirect Received:", { amount, basketId });
 
     res.send(`
         <div style='text-align:center;font-family:sans-serif;padding:50px;background:#f9f9f9;border-radius:20px;'>
-            <h1 style='color:#4CAF50;'>✅ Payment Successful!</h1>
-            <p style='font-size:18px;'>Rs. ${amount || ""} has been added to your wallet.</p>
-            <p style='color:gray;'>You can close this window now.</p>
+            <h1 style='color:#4CAF50;'>✅ Payment Received</h1>
+            <p style='font-size:18px;'>Your payment is being verified.</p>
+            <p style='color:gray;'>Your wallet will update after gateway confirmation.</p>
             <button onclick="window.close()" style="background:#FFC107; border:none; padding:10px 20px; border-radius:5px; font-weight:bold; cursor:pointer;">Close</button>
         </div>
     `);
@@ -253,6 +283,11 @@ router.get('/success', async (req, res) => {
 // Webhook Callback (The true Source of Truth)
 router.post('/callback', async (req, res) => {
     try {
+        if (!isValidWebhook(req)) {
+            console.error("❌ Rejected payment webhook: invalid signature or missing RAPID_WEBHOOK_SALT");
+            return res.status(401).send("Invalid webhook signature");
+        }
+
         console.log("📡 Webhook Received:", JSON.stringify(req.body));
 
         const { status, amount, merchantTransactionId, basketId } = req.body;
