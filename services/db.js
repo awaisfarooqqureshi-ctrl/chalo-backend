@@ -44,13 +44,26 @@ class DatabaseService {
 
     async getTransactions(userId, limit = 20) {
         if (PROVIDER === 'FIRESTORE') {
+            // MIGRATION FIX: Check both 'userId' and 'fromUserId' (legacy)
             const snapshot = await this.db.collection('transactions')
                 .where('userId', '==', userId)
                 .orderBy('timestamp', 'desc')
                 .limit(limit)
                 .get();
+
             const list = [];
             snapshot.forEach(doc => list.push({ id: doc.id, ...doc.data() }));
+
+            // If empty, try legacy field name 'fromUserId'
+            if (list.length === 0) {
+                const legacySnap = await this.db.collection('transactions')
+                    .where('fromUserId', '==', userId)
+                    .orderBy('timestamp', 'desc')
+                    .limit(limit)
+                    .get();
+                legacySnap.forEach(doc => list.push({ id: doc.id, ...doc.data() }));
+            }
+
             return list;
         }
     }
