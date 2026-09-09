@@ -89,11 +89,11 @@ router.post('/register-driver', async (req, res) => {
 router.get('/transactions/:userId', async (req, res) => {
     try {
         const userId = getCleanId(req.params.userId);
-        console.log(`🏦 Wallet Fetch for: ${userId}`);
+        console.log(`🏦 Fetching History for: ${userId}`);
 
-        const list = await DB.getTransactions(userId);
+        // Show only latest 20 items to user
+        const list = await DB.getTransactions(userId, 20);
 
-        // Final Normalization: Ensuring consistency for Android
         const cleanList = list.map(t => ({
             id: t.id || `TXN_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
             title: t.title || "Transaction",
@@ -104,10 +104,9 @@ router.get('/transactions/:userId', async (req, res) => {
             timestamp: Number(t.timestamp) || Date.now()
         }));
 
-        console.log(`✅ Returned ${cleanList.length} transactions for ${userId}`);
         res.json(cleanList);
     } catch (e) {
-        console.error("🔥 Transaction API Error:", e.message);
+        console.error("🔥 History API Error:", e.message);
         res.json([]);
     }
 });
@@ -115,20 +114,17 @@ router.get('/transactions/:userId', async (req, res) => {
 router.get('/summary/:userId', async (req, res) => {
     try {
         const userId = getCleanId(req.params.userId);
-        console.log(`📊 Generating Summary for: ${userId}`);
 
-        // Fetch enough transactions to cover at least a month
-        const list = await DB.getTransactions(userId, 100);
+        // Calculate based on last 500 transactions for accuracy
+        const list = await DB.getTransactions(userId, 500);
 
         const now = new Date();
         const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
 
-        // Calculate week start (Last Sunday)
         const weekStart = new Date(now);
         weekStart.setDate(now.getDate() - now.getDay());
         weekStart.setHours(0,0,0,0);
 
-        // Calculate month start
         const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
 
         let today = 0, weekly = 0, monthly = 0;
@@ -144,15 +140,14 @@ router.get('/summary/:userId', async (req, res) => {
             }
         });
 
-        console.log(`✅ Summary calculated for ${userId}: T=${today}, W=${weekly}, M=${monthly}`);
         res.json({
             todayEarnings: Math.round(today),
             weeklyEarnings: Math.round(weekly),
             monthlyEarnings: Math.round(monthly)
         });
     } catch (e) {
-        console.error("🔥 Summary API Fatal Error:", e.message);
-        res.status(500).json({ success: false, message: e.message });
+        console.error("🔥 Summary API Error:", e.message);
+        res.status(200).json({ todayEarnings: 0, weeklyEarnings: 0, monthlyEarnings: 0 }); // Fallback instead of 500
     }
 });
 
