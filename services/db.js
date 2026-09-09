@@ -42,12 +42,12 @@ class DatabaseService {
         }
     }
 
-    async getTransactions(userId) {
+    async getTransactions(userId, limit = 20) {
         if (PROVIDER === 'FIRESTORE') {
             const snapshot = await this.db.collection('transactions')
                 .where('userId', '==', userId)
                 .orderBy('timestamp', 'desc')
-                .limit(20)
+                .limit(limit)
                 .get();
             const list = [];
             snapshot.forEach(doc => list.push({ id: doc.id, ...doc.data() }));

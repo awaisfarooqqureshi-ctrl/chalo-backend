@@ -115,31 +115,44 @@ router.get('/transactions/:userId', async (req, res) => {
 router.get('/summary/:userId', async (req, res) => {
     try {
         const userId = getCleanId(req.params.userId);
-        const list = await DB.getTransactions(userId);
+        console.log(`📊 Generating Summary for: ${userId}`);
+
+        // Fetch enough transactions to cover at least a month
+        const list = await DB.getTransactions(userId, 100);
 
         const now = new Date();
-        const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-        const startOfWeek = new Date(now.setDate(now.getDate() - now.getDay())).getTime();
-        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+
+        // Calculate week start (Last Sunday)
+        const weekStart = new Date(now);
+        weekStart.setDate(now.getDate() - now.getDay());
+        weekStart.setHours(0,0,0,0);
+
+        // Calculate month start
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
 
         let today = 0, weekly = 0, monthly = 0;
 
         list.forEach(t => {
+            const amt = parseFloat(t.amount) || 0;
+            const ts = Number(t.timestamp) || 0;
+
             if (t.category === 'RIDE_INCOME') {
-                if (t.timestamp >= startOfDay) today += t.amount;
-                if (t.timestamp >= startOfWeek) weekly += t.amount;
-                if (t.timestamp >= startOfMonth) monthly += t.amount;
+                if (ts >= todayStart) today += amt;
+                if (ts >= weekStart.getTime()) weekly += amt;
+                if (ts >= monthStart) monthly += amt;
             }
         });
 
+        console.log(`✅ Summary calculated for ${userId}: T=${today}, W=${weekly}, M=${monthly}`);
         res.json({
-            todayEarnings: today,
-            weeklyEarnings: weekly,
-            monthlyEarnings: monthly
+            todayEarnings: Math.round(today),
+            weeklyEarnings: Math.round(weekly),
+            monthlyEarnings: Math.round(monthly)
         });
     } catch (e) {
-        console.error("🔥 Summary Error:", e.message);
-        res.status(500).send(e.message);
+        console.error("🔥 Summary API Fatal Error:", e.message);
+        res.status(500).json({ success: false, message: e.message });
     }
 });
 
