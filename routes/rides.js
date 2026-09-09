@@ -189,7 +189,7 @@ router.post('/bid', async (req, res) => {
     } catch (e) { res.status(500).send(e.message); }
 });
 
-// 4. Accept Bid
+// 4. Accept Bid (Updated: Advanced Commission Deduction)
 router.post('/accept-bid', async (req, res) => {
     try {
         const { rideId, offerId, driverId } = req.body;
@@ -197,23 +197,41 @@ router.post('/accept-bid', async (req, res) => {
         const rideRef = db.ref(`active_rides/${rideId}`);
         const driverRef = db.ref(`users/${driverId}`);
 
-        const [rideSnap, driverSnap, configSnap] = await Promise.all([rideRef.get(), driverRef.get(), db.ref('admin_config/settings').get()]);
+        const [rideSnap, driverSnap, configSnap] = await Promise.all([
+            rideRef.get(),
+            driverRef.get(),
+            db.ref('admin_config/settings').get()
+        ]);
+
         if (!rideSnap.exists() || !driverSnap.exists()) return res.status(404).send("Not found");
 
         const ride = rideSnap.val();
         const driver = driverSnap.val();
         const commissionRate = configSnap.val()?.commission_rate || 10;
+
         const acceptedOffer = Object.values(ride.offers || {}).find(o => o.id === offerId || o.driverId === driverId);
         if (!acceptedOffer) return res.status(404).send("Offer not found");
 
         const commissionAmount = Math.round((acceptedOffer.bidFare * commissionRate) / 100 * 100) / 100;
-        const newBalance = Math.round(((driver.walletBalance || 0) - commissionAmount) * 100) / 100;
 
-        await driverRef.update({ walletBalance: newBalance, driverStatus: 'ON_CITY_RIDE' });
+        // --- ADVANCED DEDUCTION ---
+        const currentBalance = (driver.walletBalance || 0);
+        const newBalance = Math.round((currentBalance - commissionAmount) * 100) / 100;
 
+        // Re-verify balance
+        if (currentBalance < commissionAmount) {
+            return res.status(400).json({ success: false, message: "Driver balance insufficient for commission." });
+        }
+
+        await driverRef.update({
+            walletBalance: newBalance,
+            driverStatus: 'ON_CITY_RIDE'
+        });
+
+        // Archive Commission via Service
         await DB.addTransaction({
             userId: getCleanId(driverId),
-            title: "Ride Commission",
+            title: "Ride Commission (Advance)",
             amount: commissionAmount,
             type: "DEBIT",
             category: "COMMISSION",
