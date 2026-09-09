@@ -139,8 +139,8 @@ router.get('/summary/:userId', async (req, res) => {
             const amt = parseFloat(t.amount) || 0;
             const ts = Number(t.timestamp) || 0;
 
-            // Only count ACTUAL ride income (category 'RIDE_INCOME')
-            if (t.category === 'RIDE_INCOME' && t.status === 'COMPLETED') {
+            // FLEXIBLE FILTER: Count everything that is CREDIT or RIDE_INCOME
+            if (t.type === 'CREDIT' || t.category === 'RIDE_INCOME' || t.category === 'TOPUP') {
                 if (ts >= todayStart) today += amt;
                 if (ts >= weekStart.getTime()) weekly += amt;
                 if (ts >= monthStart) monthly += amt;
