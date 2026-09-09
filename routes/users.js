@@ -148,6 +148,63 @@ router.get('/summary/:userId', async (req, res) => {
     }
 });
 
+// 2. Get Transaction History (Limit 20 for UI efficiency)
+router.get('/transactions/:userId', async (req, res) => {
+    try {
+        const userId = getCleanId(req.params.userId);
+        const list = await DB.getTransactions(userId, 20);
+
+        const cleanList = list.map(t => ({
+            id: t.id || `TXN_${Date.now()}`,
+            amount: Number(t.amount) || 0,
+            title: t.title || "Transaction",
+            type: t.type || "CREDIT",
+            category: t.category || "GENERAL",
+            timestamp: Number(t.timestamp) || Date.now()
+        }));
+
+        res.json(cleanList);
+    } catch (e) { res.json([]); }
+});
+
+// 3. Submit Review (Includes Reviewer Details)
+router.post('/review', async (req, res) => {
+    try {
+        const data = req.body;
+        const targetId = getCleanId(data.targetUserId);
+        const reviewerId = getCleanId(data.reviewerId);
+
+        // Fetch current reviewer's profile for name and photo
+        const db = admin.database();
+        const reviewerSnap = await db.ref(`users/${reviewerId}`).get();
+        const reviewerData = reviewerSnap.val() || {};
+
+        const reviewRecord = {
+            ...data,
+            reviewerName: reviewerData.name || "Anonymous",
+            reviewerPhoto: reviewerData.profilePhoto || "",
+            targetUserId: targetId,
+            timestamp: Date.now()
+        };
+
+        // 1. Save to Firestore
+        await DB.addReview(reviewRecord);
+
+        // 2. Update Aggregates (Counts)
+        const ref = db.ref(`users/${targetId}`);
+        const snapshot = await ref.get();
+        if (snapshot.exists()) {
+            const p = snapshot.val();
+            const prefix = (data.role?.toLowerCase() === "passenger") ? "driver" : "passenger";
+            const count = (Number(p[`${prefix}ReviewCount`]) || 0) + 1;
+            const oldRating = Number(p[`${prefix}Rating`]) || 5.0;
+            const newRating = Math.round(((oldRating * (count - 1)) + Number(data.rating)) / count * 10) / 10;
+            await ref.update({ [`${prefix}ReviewCount`]: count, [`${prefix}Rating`]: newRating });
+        }
+        res.json({ success: true });
+    } catch (e) { res.status(500).send(e.message); }
+});
+
 router.get('/profile/:userId', async (req, res) => {
     try {
         const cleanId = getCleanId(req.params.userId);
@@ -157,58 +214,13 @@ router.get('/profile/:userId', async (req, res) => {
     } catch(e) { res.status(500).send(e.message); }
 });
 
-router.post('/review', async (req, res) => {
+// 4. Get Reviews (Limit 20)
+router.get('/reviews/:userId', async (req, res) => {
     try {
-        const data = req.body;
-        const targetId = getCleanId(data.targetUserId);
-        const role = (data.role || "Passenger").toLowerCase();
-
-        console.log(`⭐ New Review Attempt: Target=${targetId}, Role=${role}, Rating=${data.rating}`);
-
-        // 1. Save to Firestore via Service
-        try {
-            await DB.addReview({
-                ...data,
-                targetUserId: targetId,
-                timestamp: Date.now()
-            });
-            console.log(`✅ Review archived in Firestore`);
-        } catch (dbErr) {
-            console.error("❌ Firestore Review Save Failed:", dbErr.message);
-        }
-
-        // 2. Update RTDB Aggregates
-        const db = admin.database();
-        const ref = db.ref(`users/${targetId}`);
-        const snapshot = await ref.get();
-
-        if (snapshot.exists()) {
-            const p = snapshot.val();
-            // If reviewer is Passenger, target is Driver
-            const isTargetDriver = (role === "passenger");
-            const prefix = isTargetDriver ? "driver" : "passenger";
-
-            const oldCount = Number(p[`${prefix}ReviewCount`]) || 0;
-            const oldRating = Number(p[`${prefix}Rating`]) || 5.0;
-
-            const newCount = oldCount + 1;
-            const newRating = Math.round(((oldRating * oldCount) + Number(data.rating)) / newCount * 10) / 10;
-
-            const updates = {};
-            updates[`${prefix}ReviewCount`] = newCount;
-            updates[`${prefix}Rating`] = newRating;
-
-            await ref.update(updates);
-            console.log(`📊 RTDB Aggregate Updated for ${targetId}: ${prefix}Rating=${newRating}, Count=${newCount}`);
-        } else {
-            console.warn(`⚠️ Target user ${targetId} not found in RTDB. Count not updated.`);
-        }
-
-        res.json({ success: true });
-    } catch (e) {
-        console.error("❌ Review API Global Error:", e.message);
-        res.status(500).send(e.message);
-    }
+        const cleanId = getCleanId(req.params.userId);
+        const list = await DB.getReviews(cleanId, 20);
+        res.json(list);
+    } catch (e) { res.status(500).send(e.message); }
 });
 
 module.exports = router;

@@ -109,6 +109,19 @@ class DatabaseService {
         }
     }
 
+    async getReviews(userId, limit = 20) {
+        if (PROVIDER === 'FIRESTORE') {
+            const snapshot = await this.db.collection('reviews')
+                .where('targetUserId', '==', userId)
+                .orderBy('timestamp', 'desc')
+                .limit(limit)
+                .get();
+            const list = [];
+            snapshot.forEach(doc => list.push({ id: doc.id, ...doc.data() }));
+            return list;
+        }
+    }
+
     // --- NOTIFICATION OPERATIONS ---
     async saveNotification(data) {
         if (PROVIDER === 'FIRESTORE') {
