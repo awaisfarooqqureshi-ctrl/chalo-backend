@@ -47,33 +47,25 @@ router.post('/update-status', async (req, res) => {
                     const driverSnap = await driverRef.get();
                     if (driverSnap.exists()) {
                         const driver = driverSnap.val();
-                        const now = new Date();
-                        const currentMonth = now.getMonth();
 
-                        let monthlyEarnings = (driver.lastEarningsResetMonth === currentMonth) ? (driver.monthlyEarnings || 0) + fare : fare;
-                        const startOfDay = new Date().setHours(0,0,0,0);
-                        let todayEarnings = (driver.lastEarningsResetDay >= startOfDay) ? (driver.todayEarnings || 0) + fare : fare;
-
+                        // --- SECURITY FIX: DO NOT UPDATE WALLET BALANCE WITH RIDE FARE ---
+                        // Only update metadata and status. Balance changes ONLY on Top-up or Commission.
                         await driverRef.update({
-                            todayEarnings,
-                            monthlyEarnings,
-                            lifetimeEarnings: (driver.lifetimeEarnings || 0) + fare,
-                            lastEarningsResetMonth: currentMonth,
-                            lastEarningsResetDay: Date.now(),
                             driverTotalRides: (driver.driverTotalRides || 0) + 1,
                             driverCompletedRides: (driver.driverCompletedRides || 0) + 1,
                             isOnline: true,
                             driverStatus: 'AVAILABLE'
                         });
 
-                        // Log Income via DB Service
+                        // Log Income for the Statement (Stored in Firestore Transactions)
                         await DB.addTransaction({
                             userId: getCleanId(driverId),
-                            title: "Ride Income",
+                            title: "Ride Income (Cash)",
                             amount: fare,
                             type: "CREDIT",
                             category: "RIDE_INCOME",
-                            reference: rideId
+                            reference: rideId,
+                            status: "COMPLETED"
                         });
 
                         // 3. BONUS LOGIC: Smart Vehicle Grouping
@@ -107,6 +99,8 @@ router.post('/update-status', async (req, res) => {
                                     if (newProgress >= scheme.target) {
                                         const reward = Number(scheme.reward);
                                         const finalWallet = Math.round(((driver.walletBalance || 0) + reward) * 100) / 100;
+
+                                        // CRITICAL: Bonus DOES go into Wallet Balance
                                         await driverRef.update({ walletBalance: finalWallet });
 
                                         await DB.addTransaction({
