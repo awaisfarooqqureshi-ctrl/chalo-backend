@@ -14,7 +14,34 @@ const upload = multer({
 // Helper: Standardized Clean ID
 function getCleanId(userId) {
     if (!userId) return "";
-    return userId.toString().replace(/\+/g, '').trim();
+    // SCALE FIX: Remove ALL non-digits to match App's RTDB path logic
+    return userId.toString().replace(/\D/g, '').trim();
+}
+
+function getPakistanDateKey(timestamp) {
+    return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Karachi',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+    }).format(new Date(Number(timestamp) || 0));
+}
+
+function getPakistanMonthKey(timestamp) {
+    return getPakistanDateKey(timestamp).slice(0, 7);
+}
+
+function getPakistanWeekKey(timestamp) {
+    const dateKey = getPakistanDateKey(timestamp);
+    const date = new Date(`${dateKey}T00:00:00Z`);
+    const day = date.getUTCDay();
+    const daysFromMonday = (day + 6) % 7;
+    date.setUTCDate(date.getUTCDate() - daysFromMonday);
+    return date.toISOString().slice(0, 10);
+}
+
+function isEarningTransaction(transaction) {
+    return transaction.category === 'RIDE_INCOME' || transaction.category === 'BONUS';
 }
 
 // --- Image Upload Proxy ---
@@ -100,8 +127,9 @@ router.get('/transactions/:userId', async (req, res) => {
         const userId = getCleanId(req.params.userId);
         console.log(`🏦 Fetching History for: ${userId}`);
 
-        // Show only latest 20 items to user
-        const list = await DB.getTransactions(userId, 20);
+        const requestedLimit = Number.parseInt(req.query.limit, 10);
+        const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 500) : 100;
+        const list = await DB.getTransactions(userId, limit);
 
         const cleanList = list.map(t => ({
             id: t.id || `TXN_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
@@ -122,29 +150,64 @@ router.get('/transactions/:userId', async (req, res) => {
 
 router.get('/summary/:userId', async (req, res) => {
     try {
-        const userId = getCleanId(req.params.userId);
-        const list = await DB.getTransactions(userId, 500); // Check last 500 txns
+        const rawId = req.params.userId;
+        const cleanId = getCleanId(rawId);
+        const db = admin.database();
 
-        const now = new Date();
-        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+        // All accounting date boundaries are calculated in Pakistan time.
+        const list = await DB.getTransactions(cleanId, 500);
 
-        let totalMonthlyCash = 0;
-        let rideCount = 0;
+        const todayKey = getPakistanDateKey(Date.now());
+        const monthKey = todayKey.slice(0, 7);
+        const weekKey = getPakistanWeekKey(Date.now());
+        const todayTransactions = list.filter(t => getPakistanDateKey(t.timestamp) === todayKey);
+        const weeklyTransactions = list.filter(t => getPakistanWeekKey(t.timestamp) === weekKey);
+        const monthlyTransactions = list.filter(t => getPakistanMonthKey(t.timestamp) === monthKey);
 
-        list.forEach(t => {
-            if (t.category === 'RIDE_INCOME' && t.timestamp >= startOfMonth) {
-                totalMonthlyCash += parseFloat(t.amount) || 0;
-                rideCount++;
-            }
-        });
+        const sumTransactions = (items, predicate) => items
+            .filter(predicate)
+            .reduce((total, item) => total + (parseFloat(item.amount) || 0), 0);
+        const earningPredicate = item => isEarningTransaction(item) && item.type === 'CREDIT';
+        const commissionPredicate = item => item.category === 'COMMISSION' && item.type === 'DEBIT';
+
+        const todayEarnings = sumTransactions(todayTransactions, earningPredicate);
+        const weeklyEarnings = sumTransactions(weeklyTransactions, earningPredicate);
+        const monthlyEarnings = sumTransactions(monthlyTransactions, earningPredicate);
+        const todayCommission = sumTransactions(todayTransactions, commissionPredicate);
+        const monthlyCommission = sumTransactions(monthlyTransactions, commissionPredicate);
+        const rideCount = monthlyTransactions.filter(t => t.category === 'RIDE_INCOME').length;
+
+        // 2. SMART WALLET FETCH (Force numeric conversion for App compatibility)
+        let userSnap = await db.ref(`users/${cleanId}/walletBalance`).get();
+
+        if (!userSnap.exists() && rawId !== cleanId) {
+            userSnap = await db.ref(`users/${rawId}/walletBalance`).get();
+        }
+
+        const rawBalance = userSnap.val();
+        const walletBalance = (rawBalance !== null && rawBalance !== undefined) ? parseFloat(rawBalance) : 0;
 
         res.json({
-            monthlyTotal: Math.round(totalMonthlyCash),
+            timezone: 'Asia/Karachi',
+            todayKey,
+            weekKey,
+            monthKey,
+            todayEarnings: Math.round(todayEarnings),
+            weeklyEarnings: Math.round(weeklyEarnings),
+            monthlyTotal: Math.round(monthlyEarnings),
+            monthlyEarnings: Math.round(monthlyEarnings),
+            todayCommission: Math.round(todayCommission),
+            monthlyCommission: Math.round(monthlyCommission),
+            todayNet: Math.round(todayEarnings - todayCommission),
+            monthlyNet: Math.round(monthlyEarnings - monthlyCommission),
+            walletBalance: walletBalance,
             rideCount: rideCount,
-            monthName: now.toLocaleString('default', { month: 'long' })
+            todayTransactions,
+            monthlyTransactions
         });
     } catch (e) {
-        res.status(200).json({ monthlyTotal: 0, rideCount: 0 });
+        console.error("🔥 Summary API Error:", e.message);
+        res.status(200).json({ todayEarnings: 0, monthlyTotal: 0, walletBalance: 0 });
     }
 });
 
