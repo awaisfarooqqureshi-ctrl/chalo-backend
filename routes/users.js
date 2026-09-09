@@ -115,16 +115,22 @@ router.get('/summary/:userId', async (req, res) => {
     try {
         const userId = getCleanId(req.params.userId);
 
-        // Calculate based on last 500 transactions for accuracy
+        // Calculate based on last 500 transactions
         const list = await DB.getTransactions(userId, 500);
 
+        // TIMEZONE FIX: Use Pakistan Time (UTC+5) for "Today"
         const now = new Date();
-        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+        const pktOffset = 5 * 60 * 60 * 1000;
+        const pktDate = new Date(now.getTime() + pktOffset);
 
+        const todayStart = new Date(pktDate.getFullYear(), pktDate.getDate() >= 1 ? pktDate.getMonth() : pktDate.getMonth(), pktDate.getDate()).getTime() - pktOffset;
+
+        // Calculate week start
         const weekStart = new Date(now);
         weekStart.setDate(now.getDate() - now.getDay());
         weekStart.setHours(0,0,0,0);
 
+        // Calculate month start
         const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
 
         let today = 0, weekly = 0, monthly = 0;
@@ -133,7 +139,8 @@ router.get('/summary/:userId', async (req, res) => {
             const amt = parseFloat(t.amount) || 0;
             const ts = Number(t.timestamp) || 0;
 
-            if (t.category === 'RIDE_INCOME') {
+            // Only count ACTUAL ride income (category 'RIDE_INCOME')
+            if (t.category === 'RIDE_INCOME' && t.status === 'COMPLETED') {
                 if (ts >= todayStart) today += amt;
                 if (ts >= weekStart.getTime()) weekly += amt;
                 if (ts >= monthStart) monthly += amt;
@@ -146,8 +153,7 @@ router.get('/summary/:userId', async (req, res) => {
             monthlyEarnings: Math.round(monthly)
         });
     } catch (e) {
-        console.error("🔥 Summary API Error:", e.message);
-        res.status(200).json({ todayEarnings: 0, weeklyEarnings: 0, monthlyEarnings: 0 }); // Fallback instead of 500
+        res.status(200).json({ todayEarnings: 0, weeklyEarnings: 0, monthlyEarnings: 0 });
     }
 });
 
