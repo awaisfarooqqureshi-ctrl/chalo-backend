@@ -158,11 +158,31 @@ router.post('/update-status', async (req, res) => {
     } catch (e) { res.status(500).send(e.message); }
 });
 
-// 3. Bid
+// 3. Bid (Updated with Commission Check)
 router.post('/bid', async (req, res) => {
     try {
         const { rideId, offer } = req.body;
         const db = admin.database();
+
+        // --- PRE-BID WALLET CHECK ---
+        const driverRef = db.ref(`users/${offer.driverId}`);
+        const driverSnap = await driverRef.get();
+        if (!driverSnap.exists()) return res.status(404).send("Driver not found");
+
+        const driver = driverSnap.val();
+        const configSnap = await db.ref('admin_config/settings').get();
+        const commissionRate = configSnap.val()?.commission_rate || 10;
+
+        const estimatedCommission = (offer.bidFare * commissionRate) / 100;
+
+        // Strict Rule: No balance, No bid
+        if ((driver.walletBalance || 0) < estimatedCommission) {
+            return res.status(400).json({
+                success: false,
+                message: "Insufficient balance. Please recharge your wallet to bid on this ride."
+            });
+        }
+
         await db.ref(`active_rides/${rideId}/offers/${offer.driverId}`).set(offer);
         await db.ref(`active_rides/${rideId}`).update({ status: 'BIDS_RECEIVED' });
         res.json({ success: true });

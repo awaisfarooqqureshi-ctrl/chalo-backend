@@ -60,6 +60,15 @@ router.post('/register-driver', async (req, res) => {
             ...documents
         };
 
+        // Remove legacy accounting fields from RTDB profile during registration
+        const dbRef = db.ref(`users/${cleanId}`);
+        await dbRef.update({
+            todayEarnings: null,
+            weeklyEarnings: null,
+            monthlyEarnings: null,
+            lifetimeEarnings: null
+        });
+
         // Welcome Bonus
         if (!userProfile.welcomeBonusApplied) {
             const bonus = 300;
