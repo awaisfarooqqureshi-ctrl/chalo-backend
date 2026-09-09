@@ -123,46 +123,28 @@ router.get('/transactions/:userId', async (req, res) => {
 router.get('/summary/:userId', async (req, res) => {
     try {
         const userId = getCleanId(req.params.userId);
+        const list = await DB.getTransactions(userId, 500); // Check last 500 txns
 
-        // Calculate based on last 500 transactions
-        const list = await DB.getTransactions(userId, 500);
-
-        // TIMEZONE FIX: Use Pakistan Time (UTC+5) for "Today"
         const now = new Date();
-        const pktOffset = 5 * 60 * 60 * 1000;
-        const pktDate = new Date(now.getTime() + pktOffset);
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
 
-        const todayStart = new Date(pktDate.getFullYear(), pktDate.getDate() >= 1 ? pktDate.getMonth() : pktDate.getMonth(), pktDate.getDate()).getTime() - pktOffset;
-
-        // Calculate week start
-        const weekStart = new Date(now);
-        weekStart.setDate(now.getDate() - now.getDay());
-        weekStart.setHours(0,0,0,0);
-
-        // Calculate month start
-        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-
-        let today = 0, weekly = 0, monthly = 0;
+        let totalMonthlyCash = 0;
+        let rideCount = 0;
 
         list.forEach(t => {
-            const amt = parseFloat(t.amount) || 0;
-            const ts = Number(t.timestamp) || 0;
-
-            // FLEXIBLE FILTER: Count everything that is CREDIT or RIDE_INCOME
-            if (t.type === 'CREDIT' || t.category === 'RIDE_INCOME' || t.category === 'TOPUP') {
-                if (ts >= todayStart) today += amt;
-                if (ts >= weekStart.getTime()) weekly += amt;
-                if (ts >= monthStart) monthly += amt;
+            if (t.category === 'RIDE_INCOME' && t.timestamp >= startOfMonth) {
+                totalMonthlyCash += parseFloat(t.amount) || 0;
+                rideCount++;
             }
         });
 
         res.json({
-            todayEarnings: Math.round(today),
-            weeklyEarnings: Math.round(weekly),
-            monthlyEarnings: Math.round(monthly)
+            monthlyTotal: Math.round(totalMonthlyCash),
+            rideCount: rideCount,
+            monthName: now.toLocaleString('default', { month: 'long' })
         });
     } catch (e) {
-        res.status(200).json({ todayEarnings: 0, weeklyEarnings: 0, monthlyEarnings: 0 });
+        res.status(200).json({ monthlyTotal: 0, rideCount: 0 });
     }
 });
 
