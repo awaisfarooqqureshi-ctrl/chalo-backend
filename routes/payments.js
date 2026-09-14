@@ -182,11 +182,16 @@ router.post('/initiate', async (req, res) => {
             ? '/rapid/process-transaction'
             : '/sandbox/process-transaction';
 
-        // Set authoritative URLs from environment variables
-        const successUrl = process.env.RAPID_SUCCESS_URL || `https://${req.get('host')}/payments/success?uid=${userId}&amt=${amount}&bid=${basketId}`;
+        // Preserve the configured redirect host while always attaching this payment identity.
+        const successUrl = new URL(
+            process.env.RAPID_SUCCESS_URL || `https://${req.get('host')}/payments/success`
+        );
+        successUrl.searchParams.set('uid', userId);
+        successUrl.searchParams.set('amt', Math.round(Number(amount)).toString());
+        successUrl.searchParams.set('bid', basketId);
         const failureUrl = process.env.RAPID_FAILURE_URL || `https://${req.get('host')}/payments/failure`;
 
-        params.append('SUCCESS_URL', successUrl);
+        params.append('SUCCESS_URL', successUrl.toString());
         params.append('FAILURE_URL', failureUrl);
         params.append('VERSION', 'MY_VER_1.0');
         params.append('PROCCODE', '0');
