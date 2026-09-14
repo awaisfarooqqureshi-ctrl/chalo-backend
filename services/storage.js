@@ -51,6 +51,24 @@ class StorageService {
         const baseUrl = process.env.LOCAL_BASE_URL || 'http://localhost:8080';
         return `${baseUrl}/public/${fileName}`;
     }
+
+    async getSignedUrl(url, expiresInMinutes = 15) {
+        if (!url) return null;
+        if (PROVIDER !== 'GCS' || !url.startsWith('gs://')) return url;
+
+        const withoutScheme = url.slice('gs://'.length);
+        const separator = withoutScheme.indexOf('/');
+        if (separator <= 0) return null;
+
+        const bucketName = withoutScheme.slice(0, separator);
+        const fileName = withoutScheme.slice(separator + 1);
+        const [signedUrl] = await new Storage().bucket(bucketName).file(fileName).getSignedUrl({
+            version: 'v4',
+            action: 'read',
+            expires: Date.now() + expiresInMinutes * 60 * 1000
+        });
+        return signedUrl;
+    }
 }
 
 module.exports = new StorageService();

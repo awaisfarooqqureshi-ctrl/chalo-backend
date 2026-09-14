@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const admin = require('firebase-admin');
+const StorageService = require('../services/storage');
 
 /**
  * PRODUCTION ADMIN ROUTES
@@ -96,6 +97,27 @@ router.post('/approve-driver', async (req, res) => {
 
         res.json({ success: true, message: `Driver status updated and notification sent.` });
     } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+router.get('/driver-documents/:userId', async (req, res) => {
+    try {
+        const cleanId = req.params.userId.toString().replace(/\D/g, '').trim();
+        const snapshot = await admin.database().ref(`users/${cleanId}`).get();
+        if (!snapshot.exists()) return res.status(404).json({ success: false, message: 'Driver not found' });
+
+        const profile = snapshot.val();
+        const fields = ['selfieUrl', 'cnicFrontUrl', 'cnicBackUrl', 'licenseFrontUrl', 'licenseBackUrl', 'registrationBookUrl', 'vehiclePhotoUrl'];
+        const documents = {};
+        for (const field of fields) {
+            const legacyField = field.replace(/Url$/, '');
+            documents[field] = await StorageService.getSignedUrl(profile[field] || profile[legacyField] || null);
+        }
+
+        res.json({ success: true, userId: cleanId, documents });
+    } catch (error) {
+        console.error('Document URL Error:', error.message);
         res.status(500).json({ success: false, message: error.message });
     }
 });

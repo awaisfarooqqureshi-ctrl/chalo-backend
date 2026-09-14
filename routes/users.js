@@ -84,6 +84,13 @@ router.post('/register-driver', async (req, res) => {
             isOwner,
             vehicleInfo,
             cnic: documents.cnic,
+            cnicFrontUrl: documents.cnicFrontUrl || documents.cnicFront || "",
+            cnicBackUrl: documents.cnicBackUrl || documents.cnicBack || "",
+            licenseFrontUrl: documents.licenseFrontUrl || documents.licenseFront || "",
+            licenseBackUrl: documents.licenseBackUrl || documents.licenseBack || "",
+            registrationBookUrl: documents.registrationBookUrl || documents.registrationBook || "",
+            vehiclePhotoUrl: documents.vehiclePhotoUrl || documents.vehiclePhoto || "",
+            selfieUrl: documents.selfieUrl || documents.selfie || "",
             ...documents
         };
 
