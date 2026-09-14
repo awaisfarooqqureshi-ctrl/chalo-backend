@@ -24,7 +24,7 @@ router.post('/send-otp-veevo', async (req, res) => {
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
 
     // FINAL AUTO-OTP TEMPLATE (Google Standard with Hashtag and Hash Key)
-    const message = `<#> Your Chalo App OTP is: ${otpCode}. O4if3eg6d5L`;
+    const message = `<#> Your Chalo App OTP is: ${otpCode}\nO4if3eg6d5L`;
 
     console.log(`✉️ Dispatching OTP to: ${cleanPhone}`);
 

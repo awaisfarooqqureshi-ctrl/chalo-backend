@@ -160,6 +160,12 @@ router.post('/initiate', async (req, res) => {
         if (!normalizedPhone.startsWith('0')) normalizedPhone = '0' + normalizedPhone;
 
         const basketId = `CHALO-${userId}-${Date.now()}`;
+        await admin.database().ref(`pending_payments/${basketId}`).set({
+            userId: getCleanId(userId),
+            amount: Math.round(Number(amount)),
+            status: 'PENDING',
+            createdAt: Date.now()
+        });
 
         // Prepare URLSearchParams for Redirect Flow (x-www-form-urlencoded)
         const params = new URLSearchParams();
@@ -176,11 +182,16 @@ router.post('/initiate', async (req, res) => {
             ? '/rapid/process-transaction'
             : '/sandbox/process-transaction';
 
-        // Set authoritative URLs from environment variables
-        const successUrl = process.env.RAPID_SUCCESS_URL || `https://${req.get('host')}/payments/success?uid=${userId}&amt=${amount}&bid=${basketId}`;
+        // Preserve the configured redirect host while always attaching this payment identity.
+        const successUrl = new URL(
+            process.env.RAPID_SUCCESS_URL || `https://${req.get('host')}/payments/success`
+        );
+        successUrl.searchParams.set('uid', userId);
+        successUrl.searchParams.set('amt', Math.round(Number(amount)).toString());
+        successUrl.searchParams.set('bid', basketId);
         const failureUrl = process.env.RAPID_FAILURE_URL || `https://${req.get('host')}/payments/failure`;
 
-        params.append('SUCCESS_URL', successUrl);
+        params.append('SUCCESS_URL', successUrl.toString());
         params.append('FAILURE_URL', failureUrl);
         params.append('VERSION', 'MY_VER_1.0');
         params.append('PROCCODE', '0');
@@ -269,6 +280,20 @@ router.get('/success', async (req, res) => {
     const basketId = req.query.bid || req.query.basket_id;
 
     console.log("🏁 Payment Redirect Received:", { amount, basketId });
+
+    if (RAPID_ENV === 'SANDBOX' || RAPID_ENV === 'TEST') {
+        const pendingRef = admin.database().ref(`pending_payments/${basketId || ''}`);
+        const pendingSnap = await pendingRef.get();
+        const pending = pendingSnap.val();
+        const redirectAmount = Math.round(Number(amount));
+
+        if (!pending || pending.status !== 'PENDING' || pending.amount !== redirectAmount) {
+            return res.status(400).send('<h1>Payment verification failed</h1><p>We could not match this sandbox payment.</p>');
+        }
+
+        await updateBalance(pending.userId, pending.amount, basketId);
+        await pendingRef.update({ status: 'COMPLETED', completedAt: Date.now() });
+    }
 
     res.send(`
         <div style='text-align:center;font-family:sans-serif;padding:50px;background:#f9f9f9;border-radius:20px;'>
