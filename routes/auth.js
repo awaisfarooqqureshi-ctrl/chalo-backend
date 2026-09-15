@@ -4,6 +4,7 @@ const axios = require('axios');
 const jwt = require('jsonwebtoken');
 const admin = require('firebase-admin');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 
 // --- FASTSMSALERTS.COM CONFIGURATION ---
 const SMS_CONFIG = {
@@ -15,16 +16,26 @@ const SMS_CONFIG = {
 
 const CHALO_SECRET = process.env.CHALO_SECRET || 'fallback_secret';
 
+function hashOtp(otp) {
+    return crypto.createHash('sha256').update(otp).digest('hex');
+}
+
+function otpHashesMatch(first, second) {
+    const firstBuffer = Buffer.from(first);
+    const secondBuffer = Buffer.from(second);
+    return firstBuffer.length === secondBuffer.length && crypto.timingSafeEqual(firstBuffer, secondBuffer);
+}
+
 // 1. Send OTP (Optimized for Auto-Verification)
 router.post('/send-otp-veevo', async (req, res) => {
     let { phone } = req.body;
     if (!phone) return res.status(400).json({ success: false, message: "Phone required" });
 
     const cleanPhone = phone.replace(/\D/g, '').trim();
-    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpCode = crypto.randomInt(100000, 1000000).toString();
 
-    // FINAL AUTO-OTP TEMPLATE (Google Standard with Hashtag and Hash Key)
-    const message = `<#> Your Chalo App OTP is: ${otpCode}. L7Ur+8Z2MWo`;
+    // Keep the hash for the APK signing key so SMS Retriever can match the message.
+    const message = `Your Chalo App OTP is: ${otpCode}\nO4if3eg6d5L`;
 
     console.log(`✉️ Dispatching OTP to: ${cleanPhone}`);
 
@@ -47,8 +58,10 @@ router.post('/send-otp-veevo', async (req, res) => {
         // SAVE OTP TO FIREBASE RTDB
         const db = admin.database();
         await db.ref(`temp_otps/${cleanPhone}`).set({
-            otp: otpCode,
-            timestamp: Date.now()
+            otpHash: hashOtp(otpCode),
+            timestamp: Date.now(),
+            expiresAt: Date.now() + 300000,
+            attempts: 0
         });
 
         res.json({ success: true, message: "OTP Sent Successfully" });
@@ -73,10 +86,22 @@ router.post('/verify-otp-veevo', async (req, res) => {
             return res.status(400).json({ success: false, message: "Invalid OTP (Not Found)" });
         }
 
-        const dbOtp = snapshot.val().otp;
-        console.log(`🔍 Verification: Phone=${cleanPhone}, Input=${otp}, DB=${dbOtp}`);
+        const otpData = snapshot.val();
+        const suppliedOtp = String(otp || '');
+        const storedHash = typeof otpData.otpHash === 'string' ? otpData.otpHash : '';
+        const hashesMatch = otpHashesMatch(storedHash, hashOtp(suppliedOtp));
 
-        if (dbOtp !== otp) {
+        if (Date.now() > Number(otpData.expiresAt || 0) || Number(otpData.attempts || 0) >= 5) {
+            await otpRef.remove();
+            return res.status(400).json({ success: false, message: "Invalid or expired OTP" });
+        }
+
+        if (!hashesMatch) {
+            await otpRef.transaction(current => {
+                if (!current) return;
+                const attempts = Number(current.attempts || 0) + 1;
+                return attempts >= 5 ? null : { ...current, attempts };
+            });
             console.log(`❌ OTP Mismatch for ${cleanPhone}`);
             return res.status(400).json({ success: false, message: "Invalid OTP" });
         }
@@ -179,14 +204,25 @@ router.post('/admin/login', async (req, res) => {
 router.post('/admin/setup-initial', async (req, res) => {
     const { name, email, password, secretKey } = req.body;
 
-    if (secretKey !== process.env.ADMIN_SETUP_KEY && secretKey !== "chalo_setup_2026") {
+    const configuredSetupKey = (process.env.ADMIN_SETUP_KEY || '').trim();
+    const suppliedSetupKey = typeof secretKey === 'string' ? secretKey : '';
+    const keysMatch = configuredSetupKey.length > 0 &&
+        suppliedSetupKey.length === configuredSetupKey.length &&
+        crypto.timingSafeEqual(
+            Buffer.from(suppliedSetupKey),
+            Buffer.from(configuredSetupKey)
+        );
+
+    if (!keysMatch) {
         return res.status(403).json({ success: false, message: "Unauthorized" });
     }
 
     try {
         const fs = admin.firestore();
-        const existing = await fs.collection('admins').where('email', '==', email).get();
-        if (!existing.empty) return res.status(400).json({ success: false, message: "Already exists" });
+        const existingAdmins = await fs.collection('admins').limit(1).get();
+        if (!existingAdmins.empty) {
+            return res.status(409).json({ success: false, message: "Initial admin setup is already complete" });
+        }
 
         const hashedPassword = await bcrypt.hash(password, 10);
         await fs.collection('admins').add({

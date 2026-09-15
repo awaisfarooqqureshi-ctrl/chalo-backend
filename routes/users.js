@@ -18,6 +18,16 @@ function getCleanId(userId) {
     return userId.toString().replace(/\D/g, '').trim();
 }
 
+function isAdminUser(req) {
+    const { isAdmin, role } = req.user || {};
+    return isAdmin === true && ['SUPER_ADMIN', 'MANAGER'].includes(role);
+}
+
+function requireSelfOrAdmin(req, requestedId) {
+    const authenticatedId = getCleanId(req.user?.userId);
+    return isAdminUser(req) || (authenticatedId && authenticatedId === requestedId);
+}
+
 function getPakistanDateKey(timestamp) {
     return new Intl.DateTimeFormat('en-CA', {
         timeZone: 'Asia/Karachi',
@@ -71,7 +81,17 @@ router.post('/upload-image', upload.single('image'), async (req, res) => {
 router.post('/register-driver', async (req, res) => {
     try {
         const { userId, vehicleInfo, documents, isOwner } = req.body;
-        const cleanId = getCleanId(userId);
+        const authenticatedId = getCleanId(req.user?.userId);
+        const requestedId = getCleanId(userId);
+
+        if (!authenticatedId) {
+            return res.status(401).json({ success: false, message: "Unauthorized: User identity missing" });
+        }
+        if (requestedId && requestedId !== authenticatedId) {
+            return res.status(403).json({ success: false, message: "Forbidden: Cannot register another user" });
+        }
+
+        const cleanId = authenticatedId;
         const db = admin.database();
 
         const userRef = db.ref(`users/${cleanId}`);
@@ -84,6 +104,13 @@ router.post('/register-driver', async (req, res) => {
             isOwner,
             vehicleInfo,
             cnic: documents.cnic,
+            cnicFrontUrl: documents.cnicFrontUrl || documents.cnicFront || "",
+            cnicBackUrl: documents.cnicBackUrl || documents.cnicBack || "",
+            licenseFrontUrl: documents.licenseFrontUrl || documents.licenseFront || "",
+            licenseBackUrl: documents.licenseBackUrl || documents.licenseBack || "",
+            registrationBookUrl: documents.registrationBookUrl || documents.registrationBook || "",
+            vehiclePhotoUrl: documents.vehiclePhotoUrl || documents.vehiclePhoto || "",
+            selfieUrl: documents.selfieUrl || documents.selfie || "",
             ...documents
         };
 
@@ -125,6 +152,9 @@ router.post('/register-driver', async (req, res) => {
 router.get('/transactions/:userId', async (req, res) => {
     try {
         const userId = getCleanId(req.params.userId);
+        if (!requireSelfOrAdmin(req, userId)) {
+            return res.status(403).json({ success: false, message: "Forbidden: Cannot access another user's transactions" });
+        }
         console.log(`🏦 Fetching History for: ${userId}`);
 
         const requestedLimit = Number.parseInt(req.query.limit, 10);
@@ -152,6 +182,9 @@ router.get('/summary/:userId', async (req, res) => {
     try {
         const rawId = req.params.userId;
         const cleanId = getCleanId(rawId);
+        if (!requireSelfOrAdmin(req, cleanId)) {
+            return res.status(403).json({ success: false, message: "Forbidden: Cannot access another user's summary" });
+        }
         const db = admin.database();
 
         // All accounting date boundaries are calculated in Pakistan time.
@@ -235,7 +268,10 @@ router.post('/review', async (req, res) => {
     try {
         const data = req.body;
         const targetId = getCleanId(data.targetUserId);
-        const reviewerId = getCleanId(data.reviewerId);
+        const reviewerId = getCleanId(req.user?.userId);
+        if (!reviewerId || (data.reviewerId && getCleanId(data.reviewerId) !== reviewerId)) {
+            return res.status(403).json({ success: false, message: "Forbidden: Reviewer identity mismatch" });
+        }
 
         // Fetch current reviewer's profile for name and photo
         const db = admin.database();
@@ -272,7 +308,21 @@ router.get('/profile/:userId', async (req, res) => {
     try {
         const cleanId = getCleanId(req.params.userId);
         const snap = await admin.database().ref(`users/${cleanId}`).get();
-        if (snap.exists()) res.json(snap.val());
+        if (snap.exists()) {
+            const profile = snap.val();
+            if (!requireSelfOrAdmin(req, cleanId)) {
+                return res.json({
+                    uid: profile.uid,
+                    name: profile.name,
+                    profilePhoto: profile.profilePhoto,
+                    role: profile.role,
+                    vehicleInfo: profile.vehicleInfo,
+                    driverRating: profile.driverRating,
+                    driverReviewCount: profile.driverReviewCount
+                });
+            }
+            res.json(profile);
+        }
         else res.status(404).send("Not found");
     } catch(e) { res.status(500).send(e.message); }
 });

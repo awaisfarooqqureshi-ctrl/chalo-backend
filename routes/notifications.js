@@ -6,7 +6,7 @@ const DB = require('../services/db');
 // Helper: Standardized Clean ID
 function getCleanId(userId) {
     if (!userId) return "";
-    return userId.toString().replace(/\+/g, '').trim();
+    return userId.toString().replace(/\D/g, '').trim();
 }
 
 // 1. Send Notification (Admin API)
@@ -47,7 +47,14 @@ router.post('/send', async (req, res) => {
 // 2. Get Notification History
 router.get('/:userId', async (req, res) => {
     try {
-        const history = await DB.getNotifications(getCleanId(req.params.userId));
+        const requestedId = getCleanId(req.params.userId);
+        const authenticatedId = getCleanId(req.user?.userId);
+        const { isAdmin, role } = req.user || {};
+        const isAdminUser = isAdmin === true && ['SUPER_ADMIN', 'MANAGER'].includes(role);
+        if (!isAdminUser && (!authenticatedId || authenticatedId !== requestedId)) {
+            return res.status(403).json({ success: false, message: "Forbidden: Cannot access another user's notifications" });
+        }
+        const history = await DB.getNotifications(requestedId);
         res.json(history);
     } catch (e) {
         console.error("❌ Get Notifications Error:", e.message);

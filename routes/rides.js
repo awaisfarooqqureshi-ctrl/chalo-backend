@@ -6,7 +6,22 @@ const DB = require('../services/db');
 // Helper: Standardized Clean ID
 function getCleanId(userId) {
     if (!userId) return "";
-    return userId.toString().replace(/\+/g, '').trim();
+    return userId.toString().replace(/\D/g, '').trim();
+}
+
+function distanceKm(lat1, lon1, lat2, lon2) {
+    const earthRadiusKm = 6371;
+    const toRadians = value => value * Math.PI / 180;
+    const dLat = toRadians(lat2 - lat1);
+    const dLon = toRadians(lon2 - lon1);
+    const a = Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) * Math.sin(dLon / 2) ** 2;
+    return earthRadiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function sharedRoutesMatch(first, second) {
+    return distanceKm(first.pickupLat, first.pickupLon, second.pickupLat, second.pickupLon) <= 5 &&
+        distanceKm(first.destinationLat, first.destinationLon, second.destinationLat, second.destinationLon) <= 5;
 }
 
 // 1. Request Ride
@@ -202,9 +217,44 @@ router.post('/accept-bid', async (req, res) => {
         const ride = rideSnap.val();
         const driver = driverSnap.val();
         const commissionRate = configSnap.val()?.commission_rate || 10;
+        const authenticatedUserId = getCleanId(req.user?.userId);
+        const rideOwnerId = getCleanId(ride.passengerId || ride.userId);
 
-        const acceptedOffer = Object.values(ride.offers || {}).find(o => o.id === offerId || o.driverId === driverId);
+        if (!authenticatedUserId || !rideOwnerId || authenticatedUserId !== rideOwnerId) {
+            return res.status(403).json({ success: false, message: "Forbidden: Only the ride owner can accept a bid" });
+        }
+        if (['ACCEPTED', 'COMPLETED', 'RIDE_COMPLETED', 'CANCELLED', 'RIDE_CANCELLED'].includes(ride.status)) {
+            return res.status(409).json({ success: false, message: "Ride is no longer accepting bids" });
+        }
+
+        const acceptedOffer = Object.values(ride.offers || {}).find(o =>
+            o.id === offerId &&
+            getCleanId(o.driverId) === getCleanId(driverId)
+        );
         if (!acceptedOffer) return res.status(404).send("Offer not found");
+
+        const activeRidesSnap = await db.ref('active_rides').get();
+        const activeSharedRides = [];
+        activeRidesSnap.forEach(child => {
+            const activeRide = child.val();
+            if (child.key !== rideId && activeRide.driverId === driverId && activeRide.serviceType === 'CARPOOL' &&
+                !['COMPLETED', 'RIDE_COMPLETED', 'CANCELLED', 'RIDE_CANCELLED'].includes(activeRide.status)) {
+                activeSharedRides.push(activeRide);
+            }
+        });
+
+        const sharedRide = ride.serviceType === 'CARPOOL';
+        const currentSeats = activeSharedRides.reduce((total, item) => total + Number(item.seatsBooked || 1), 0);
+        if (sharedRide && activeSharedRides.some(item => !sharedRoutesMatch(item, ride))) {
+            return res.status(409).json({ success: false, message: 'Shared ride is outside the driver route.' });
+        }
+        if (sharedRide && currentSeats + Number(ride.seatsBooked || 1) > 4) {
+            return res.status(409).json({ success: false, message: 'No shared seats remaining.' });
+        }
+
+        const poolId = sharedRide
+            ? (activeSharedRides.find(item => item.poolId)?.poolId || activeSharedRides[0]?.id || rideId)
+            : null;
 
         const commissionAmount = Math.round((acceptedOffer.bidFare * commissionRate) / 100 * 100) / 100;
 
@@ -219,7 +269,8 @@ router.post('/accept-bid', async (req, res) => {
 
         await driverRef.update({
             walletBalance: newBalance,
-            driverStatus: 'ON_CITY_RIDE'
+            driverStatus: sharedRide ? 'ON_CARPOOL_PICKUP' : 'ON_CITY_RIDE',
+            isOnline: sharedRide ? true : false
         });
 
         // Archive Commission via Service
@@ -232,8 +283,27 @@ router.post('/accept-bid', async (req, res) => {
             reference: rideId
         });
 
-        const updates = { status: 'ACCEPTED', driverId: driverId, driverName: driver.name, offeredFare: acceptedOffer.bidFare, commissionAmount, vehicleType: driver.vehicleInfo?.type || ride.vehicleType };
+        const updates = {
+            status: 'ACCEPTED',
+            driverId: driverId,
+            driverName: driver.name,
+            offeredFare: acceptedOffer.bidFare,
+            commissionAmount,
+            vehicleType: driver.vehicleInfo?.type || ride.vehicleType,
+            ...(sharedRide ? { poolId } : {})
+        };
         await rideRef.update(updates);
+        if (sharedRide && activeSharedRides.length > 0) {
+            const updatesForPool = {};
+            activeRidesSnap.forEach(child => {
+                const activeRide = child.val();
+                if (activeRide.driverId === driverId && activeRide.serviceType === 'CARPOOL' &&
+                    !['COMPLETED', 'RIDE_COMPLETED', 'CANCELLED', 'RIDE_CANCELLED'].includes(activeRide.status)) {
+                    updatesForPool[`active_rides/${child.key}/poolId`] = poolId;
+                }
+            });
+            await db.ref().update(updatesForPool);
+        }
         res.json({ success: true });
     } catch (e) { res.status(500).send(e.message); }
 });
