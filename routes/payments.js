@@ -7,6 +7,7 @@ const admin = require('firebase-admin');
 // Detect Environment and Base URL
 const RAPID_ENV = (process.env.RAPID_ENVIRONMENT || 'SANDBOX').toUpperCase();
 const BASE_URL = (process.env.RAPID_API_BASE_URL || "https://secure.rapid-gateway.com").replace(/\/$/, "");
+const WEBHOOK_SALT = process.env.RAPID_WEBHOOK_SALT || "";
 
 // Credentials Mapping Logic
 let RAPID_CLIENT_ID, RAPID_CLIENT_SECRET, RAPID_MERCHANT_ID;
@@ -29,11 +30,50 @@ console.log(`   Base: ${BASE_URL}`);
 console.log(`   MID:  ${RAPID_MERCHANT_ID}`);
 console.log(`   🔑 OAuth Attempt: ID=${RAPID_CLIENT_ID?.substring(0,2)}***, Secret=${RAPID_CLIENT_SECRET?.substring(0,2)}***`);
 
+function getCleanId(userId) {
+    if (!userId) return "";
+    return userId.toString().replace(/\D/g, '').trim();
+}
+
+function getWebhookSignature(req) {
+    return req.headers['x-rapid-webhook-signature'] ||
+        req.headers['x-webhook-signature'] ||
+        req.body?.signature ||
+        req.body?.webhookSignature ||
+        req.body?.secureHash ||
+        req.body?.pp_SecureHash ||
+        "";
+}
+
+function isValidWebhook(req) {
+    if (!WEBHOOK_SALT || !req.rawBody) return false;
+
+    const suppliedSignature = getWebhookSignature(req).toString().replace(/^sha256=/i, '').trim();
+    if (!suppliedSignature) return false;
+
+    const payload = Buffer.from(req.rawBody);
+    const expectedHex = crypto.createHmac('sha256', WEBHOOK_SALT).update(payload).digest('hex');
+    const expectedBase64 = crypto.createHmac('sha256', WEBHOOK_SALT).update(payload).digest('base64');
+    const candidates = [
+        { value: expectedHex, caseInsensitive: true },
+        { value: expectedBase64, caseInsensitive: false }
+    ];
+
+    return candidates.some(({ value, caseInsensitive }) => {
+        const normalizedSupplied = caseInsensitive ? suppliedSignature.toLowerCase() : suppliedSignature;
+        const normalizedExpected = caseInsensitive ? value.toLowerCase() : value;
+        const supplied = Buffer.from(normalizedSupplied);
+        const actual = Buffer.from(normalizedExpected);
+        return supplied.length === actual.length && crypto.timingSafeEqual(supplied, actual);
+    });
+}
+
 /** ── Helper: Update User Balance in RTDB (Secure & Idempotent) ───── */
 async function updateBalance(userId, amount, basketId) {
     if (!userId || !amount || !basketId) return;
     try {
-        const cleanId = userId.toString().replace(/[.$#[\]]/g, '').trim();
+        // SCALE FIX: Standardized cleaning to match App's RTDB logic (Digits only)
+        const cleanId = userId.toString().replace(/\D/g, '').trim();
         const fs = admin.firestore();
 
         // 1. Check if this transaction was already processed in Firestore (Idempotency)
@@ -104,9 +144,14 @@ async function getAccessToken() {
 router.post('/initiate', async (req, res) => {
     try {
         const data = req.body.paymentIntent || req.body;
-        const { amount, userId, phone } = data;
+        const { amount, userId: requestedUserId, phone } = data;
+        const authenticatedUserId = req.user?.userId || "";
+        const userId = authenticatedUserId || requestedUserId;
 
         if (!amount || !userId || !phone) return res.status(400).json({ success: false, message: "Missing data" });
+        if (authenticatedUserId && requestedUserId && getCleanId(authenticatedUserId) !== getCleanId(requestedUserId)) {
+            return res.status(403).json({ success: false, message: "Payment user mismatch" });
+        }
 
         const token = await getAccessToken();
 
@@ -116,6 +161,13 @@ router.post('/initiate', async (req, res) => {
         if (!normalizedPhone.startsWith('0')) normalizedPhone = '0' + normalizedPhone;
 
         const basketId = `CHALO-${userId}-${Date.now()}`;
+
+        await admin.database().ref(`pending_payments/${basketId}`).set({
+            userId: getCleanId(userId),
+            amount: Math.round(Number(amount)),
+            status: 'PENDING',
+            createdAt: Date.now()
+        });
 
         // Prepare URLSearchParams for Redirect Flow (x-www-form-urlencoded)
         const params = new URLSearchParams();
@@ -133,10 +185,15 @@ router.post('/initiate', async (req, res) => {
             : '/sandbox/process-transaction';
 
         // Set authoritative URLs from environment variables
-        const successUrl = process.env.RAPID_SUCCESS_URL || `https://${req.get('host')}/payments/success?uid=${userId}&amt=${amount}&bid=${basketId}`;
+        const successUrl = new URL(
+            process.env.RAPID_SUCCESS_URL || `https://${req.get('host')}/payments/success`
+        );
+        successUrl.searchParams.set('uid', userId);
+        successUrl.searchParams.set('amt', Math.round(Number(amount)).toString());
+        successUrl.searchParams.set('bid', basketId);
         const failureUrl = process.env.RAPID_FAILURE_URL || `https://${req.get('host')}/payments/failure`;
 
-        params.append('SUCCESS_URL', successUrl);
+        params.append('SUCCESS_URL', successUrl.toString());
         params.append('FAILURE_URL', failureUrl);
         params.append('VERSION', 'MY_VER_1.0');
         params.append('PROCCODE', '0');
@@ -172,6 +229,24 @@ router.post('/initiate', async (req, res) => {
 /** ── NEW: Simple Hosted Checkout Page (Step 3: Mount SDK) ─── */
 router.get('/checkout', (req, res) => {
     const { sid, secret, pk, amt, bid } = req.query;
+    const clientSecret = typeof secret === 'string' ? secret : '';
+    const publishableKey = typeof pk === 'string' ? pk : '';
+    const basketId = typeof bid === 'string' ? bid : '';
+    const amount = Number(amt);
+
+    if (!clientSecret || !publishableKey || !basketId || !Number.isFinite(amount) || amount <= 0) {
+        return res.status(400).send('<h1>Invalid checkout request</h1>');
+    }
+
+    // Escape values for the JavaScript context and prevent </script> termination.
+    const scriptValue = value => JSON.stringify(value)
+        .replace(/</g, '\\u003c')
+        .replace(/>/g, '\\u003e')
+        .replace(/&/g, '\\u0026');
+    const safeSecret = scriptValue(clientSecret);
+    const safePublishableKey = scriptValue(publishableKey);
+    const safeBasketId = scriptValue(basketId);
+    const safeAmount = amount.toString();
 
     res.send(`
         <!DOCTYPE html>
@@ -192,14 +267,19 @@ router.get('/checkout', (req, res) => {
             </div>
             <script>
                 try {
-                    const rp = RapidPay("${pk}");
+                    const rp = RapidPay(${safePublishableKey});
                     const checkout = rp.mountCheckout('#rp-checkout', {
-                        clientSecret: "${secret}",
-                        amount: ${amt},
+                        clientSecret: ${safeSecret},
+                        amount: ${safeAmount},
                         currency: 'PKR',
                         merchantName: 'Chalo Drive',
                         onSuccess: ({ sessionId }) => {
-                            window.location.href = "/payments/success?status=success&basket_id=${bid}&amount=${amt}";
+                            const params = new URLSearchParams({
+                                status: 'success',
+                                basket_id: ${safeBasketId},
+                                amount: ${safeAmount}
+                            });
+                            window.location.href = "/payments/success?" + params.toString();
                         },
                         onPending: ({ sessionId }) => {
                             alert("Payment is pending. Please wait.");
@@ -221,30 +301,30 @@ router.get('/checkout', (req, res) => {
 // Authoritative Redirect Success Page
 router.get('/success', async (req, res) => {
     // Robust extraction from multiple possible sources
-    const status = req.query.status || 'success';
     const amount = req.query.amt || req.query.amount;
     const basketId = req.query.bid || req.query.basket_id;
-    const userId = req.query.uid;
 
-    console.log("🏁 Success Redirect Hit:", { status, amount, basketId, userId });
+    console.log("🏁 Payment Redirect Received:", { amount, basketId });
 
-    if (status.toLowerCase() === 'success') {
-        if (userId && amount) {
-            await updateBalance(userId, amount, basketId);
-        } else if (basketId) {
-            // Fallback: try extracting from basketId if uid/amt missing
-            const parts = basketId.split('-');
-            const extractedId = parts.slice(1, -1).join('-');
-            // Note: can't extract amount from basketId easily without extra logic
-            if (extractedId && amount) await updateBalance(extractedId, amount, basketId);
+    if (RAPID_ENV === 'SANDBOX' || RAPID_ENV === 'TEST') {
+        const pendingRef = admin.database().ref(`pending_payments/${basketId || ''}`);
+        const pendingSnap = await pendingRef.get();
+        const pending = pendingSnap.val();
+        const redirectAmount = Math.round(Number(amount));
+
+        if (!pending || pending.status !== 'PENDING' || pending.amount !== redirectAmount) {
+            return res.status(400).send('<h1>Payment verification failed</h1><p>We could not match this sandbox payment.</p>');
         }
+
+        await updateBalance(pending.userId, pending.amount, basketId);
+        await pendingRef.update({ status: 'COMPLETED', completedAt: Date.now() });
     }
 
     res.send(`
         <div style='text-align:center;font-family:sans-serif;padding:50px;background:#f9f9f9;border-radius:20px;'>
-            <h1 style='color:#4CAF50;'>✅ Payment Successful!</h1>
-            <p style='font-size:18px;'>Rs. ${amount || ""} has been added to your wallet.</p>
-            <p style='color:gray;'>You can close this window now.</p>
+            <h1 style='color:#4CAF50;'>✅ Payment Received</h1>
+            <p style='font-size:18px;'>Your payment is being verified.</p>
+            <p style='color:gray;'>Your wallet will update after gateway confirmation.</p>
             <button onclick="window.close()" style="background:#FFC107; border:none; padding:10px 20px; border-radius:5px; font-weight:bold; cursor:pointer;">Close</button>
         </div>
     `);
@@ -253,6 +333,11 @@ router.get('/success', async (req, res) => {
 // Webhook Callback (The true Source of Truth)
 router.post('/callback', async (req, res) => {
     try {
+        if (!isValidWebhook(req)) {
+            console.error("❌ Rejected payment webhook: invalid signature or missing RAPID_WEBHOOK_SALT");
+            return res.status(401).send("Invalid webhook signature");
+        }
+
         console.log("📡 Webhook Received:", JSON.stringify(req.body));
 
         const { status, amount, merchantTransactionId, basketId } = req.body;
