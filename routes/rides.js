@@ -43,12 +43,39 @@ router.post('/request', async (req, res) => {
 router.post('/update-status', async (req, res) => {
     try {
         const { rideId, status, cancelledBy } = req.body;
+        const authenticatedUserId = getCleanId(req.user?.userId);
+        const allowedStatuses = new Set([
+            'FINDING_DRIVER', 'BIDS_RECEIVED', 'ACCEPTED',
+            'DRIVER_EN_ROUTE_TO_PASSENGER', 'DRIVER_ARRIVED',
+            'PASSENGER_PICKED_UP', 'TRIP_ACTIVE', 'RIDE_STARTED',
+            'ON_TRIP', 'ARRIVED', 'COMPLETED', 'RIDE_COMPLETED',
+            'CANCELLED', 'RIDE_CANCELLED'
+        ]);
+        if (!rideId || !allowedStatuses.has(status)) {
+            return res.status(400).json({ success: false, message: 'Invalid ride status update' });
+        }
+        if (!authenticatedUserId) {
+            return res.status(401).json({ success: false, message: 'Unauthorized' });
+        }
+
         const db = admin.database();
         const rideRef = db.ref(`active_rides/${rideId}`);
 
         const rideSnap = await rideRef.get();
         if (!rideSnap.exists()) return res.status(404).send("Ride not found");
         const finalRideData = rideSnap.val();
+        const passengerId = getCleanId(finalRideData.passengerId || finalRideData.userId);
+        const driverId = getCleanId(finalRideData.driverId);
+        if (authenticatedUserId !== passengerId && authenticatedUserId !== driverId) {
+            return res.status(403).json({ success: false, message: 'Forbidden: You are not part of this ride' });
+        }
+        if (cancelledBy && getCleanId(cancelledBy) !== authenticatedUserId &&
+            !['driver', 'passenger'].includes(String(cancelledBy).toLowerCase())) {
+            return res.status(400).json({ success: false, message: 'Invalid cancellation actor' });
+        }
+        if (['COMPLETED', 'RIDE_COMPLETED', 'CANCELLED', 'RIDE_CANCELLED'].includes(finalRideData.status)) {
+            return res.status(409).json({ success: false, message: 'Ride is already in a terminal state' });
+        }
 
         await rideRef.update({ status });
 
