@@ -198,18 +198,33 @@ router.post('/update-status', async (req, res) => {
 router.post('/bid', async (req, res) => {
     try {
         const { rideId, offer } = req.body;
+        const authenticatedUserId = getCleanId(req.user?.userId);
+        if (!rideId || !offer || !authenticatedUserId) {
+            return res.status(400).json({ success: false, message: 'Invalid bid request' });
+        }
+
+        const driverId = authenticatedUserId;
+        const securedOffer = { ...offer, driverId };
         const db = admin.database();
 
         // --- PRE-BID WALLET CHECK ---
-        const driverRef = db.ref(`users/${offer.driverId}`);
+        const driverRef = db.ref(`users/${driverId}`);
         const driverSnap = await driverRef.get();
         if (!driverSnap.exists()) return res.status(404).send("Driver not found");
 
         const driver = driverSnap.val();
+        if (String(driver.role || '').toLowerCase() !== 'driver' &&
+            driver.driverRegistered !== true) {
+            return res.status(403).json({ success: false, message: 'Only registered drivers can place bids' });
+        }
         const configSnap = await db.ref('admin_config/settings').get();
         const commissionRate = configSnap.val()?.commission_rate || 10;
 
-        const estimatedCommission = (offer.bidFare * commissionRate) / 100;
+        const bidFare = Number(securedOffer.bidFare);
+        if (!Number.isFinite(bidFare) || bidFare <= 0) {
+            return res.status(400).json({ success: false, message: 'Invalid bid fare' });
+        }
+        const estimatedCommission = (bidFare * commissionRate) / 100;
 
         // Strict Rule: No balance, No bid
         if ((driver.walletBalance || 0) < estimatedCommission) {
@@ -219,7 +234,7 @@ router.post('/bid', async (req, res) => {
             });
         }
 
-        await db.ref(`active_rides/${rideId}/offers/${offer.driverId}`).set(offer);
+        await db.ref(`active_rides/${rideId}/offers/${driverId}`).set(securedOffer);
         await db.ref(`active_rides/${rideId}`).update({ status: 'BIDS_RECEIVED' });
         res.json({ success: true });
     } catch (e) { res.status(500).send(e.message); }
