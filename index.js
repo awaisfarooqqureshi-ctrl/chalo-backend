@@ -54,7 +54,7 @@ try {
 // 2. SCALE OPTIMIZATION: Rate Limiting
 const limiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 250,
+    max: 1000,
     message: { success: false, message: "Too many requests, please try again later." },
     standardHeaders: true,
     legacyHeaders: false,
@@ -63,8 +63,12 @@ app.use(limiter);
 
 app.set('socketio', io);
 app.use(cors());
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
+const captureRawBody = (req, res, buffer) => {
+    req.rawBody = Buffer.from(buffer);
+};
+
+app.use(express.json({ limit: '50mb', verify: captureRawBody }));
+app.use(express.urlencoded({ limit: '50mb', extended: true, verify: captureRawBody }));
 
 // Modular Routes & Middleware
 const { verifyAppKey, verifyToken, verifyAdmin } = require('./middleware/auth');
@@ -99,18 +103,48 @@ app.use((err, req, res, next) => {
 
 // 3. SCALE OPTIMIZATION: Uber-style Spatial Sockets (H3 Rooms)
 const h3 = require('h3-js');
+const jwt = require('jsonwebtoken');
 io.on('connection', (socket) => {
-    const userId = socket.handshake.query.userId;
+    const authToken = socket.handshake.auth && socket.handshake.auth.token;
+    if (!authToken || !process.env.CHALO_SECRET) {
+        socket.disconnect(true);
+        return;
+    }
+
+    let authenticatedUser;
+    try {
+        authenticatedUser = jwt.verify(authToken, process.env.CHALO_SECRET);
+    } catch (error) {
+        socket.disconnect(true);
+        return;
+    }
+
+    const userId = authenticatedUser.userId;
+    if (!userId) {
+        socket.disconnect(true);
+        return;
+    }
+
     console.log(`New client connected: ${socket.id} (User: ${userId})`);
 
     socket.on('update_location', async (data) => {
-        if (data.userId && data.lat && (data.lon || data.lng)) {
-            const cleanId = data.userId.replace('+', '').trim();
-            const longitude = data.lon || data.lng;
+        if (data && Number.isFinite(Number(data.lat)) &&
+            Number.isFinite(Number(data.lon || data.lng))) {
+            // SCALE FIX: Remove ALL non-digits to match App's RTDB path logic
+            const cleanId = userId.toString().replace(/\D/g, '').trim();
+            const longitude = Number(data.lon || data.lng);
+            const latitude = Number(data.lat);
 
             // H3 Precision 7 (~1.2km hexagons)
-            const hexAddr = h3.latLngToCell(data.lat, longitude, 7);
-            const updatedData = { ...data, userId: cleanId, lon: longitude, h3Index: hexAddr };
+            const hexAddr = h3.latLngToCell(latitude, longitude, 7);
+            const updatedData = {
+                lat: latitude,
+                lon: longitude,
+                rotation: Number(data.rotation) || 0,
+                type: typeof data.type === 'string' ? data.type : 'Car',
+                userId: cleanId,
+                h3Index: hexAddr
+            };
             delete updatedData.lng; // Unified field name
 
             // a. Join the spatial room for this hexagon
@@ -127,7 +161,7 @@ io.on('connection', (socket) => {
             // c. Debounced persistence (Save to Firebase every 10s or 500m move)
             try {
                 admin.database().ref(`users/${cleanId}`).update({
-                    lastLat: data.lat,
+                    lastLat: latitude,
                     lastLon: longitude,
                     h3Index: hexAddr,
                     lastSeen: Date.now()
@@ -142,6 +176,7 @@ io.on('connection', (socket) => {
 });
 
 app.get('/', (req, res) => res.json({ status: "Online", message: "Chalo API Scalable v1.2" }));
+app.get('/health', (req, res) => res.json({ status: "ok", service: "chalo-server" }));
 
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, "0.0.0.0", () => {
